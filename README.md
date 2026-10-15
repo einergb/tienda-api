@@ -1,20 +1,22 @@
 # tienda-api
 
-Plantilla backend e-commerce (Spring Boot 3 + Java 21 + JDBC + PostgreSQL + Flyway), lista para Docker.
+Plantilla backend e-commerce (Spring Boot 3 + Java 21 + JDBC + PostgreSQL + Flyway), lista para Docker. El Compose de este proyecto levanta solo la API y se conecta al contenedor PostgreSQL existente `web_db`.
 
 ## Arrancar con Docker
 
 ```bash
 cp .env.example .env
-# Edita .env: DB_PASSWORD, JWT_SECRET (min. 32 caracteres) y ADMIN_PASSWORD
+# Configura DB_NAME, DB_USER y DB_PASSWORD con los valores de tu PostgreSQL existente.
+# Configura JWT_SECRET (min. 32 caracteres) y, si aplica, ADMIN_PASSWORD.
 docker compose up -d --build
 ```
 
-- API: http://localhost:8080
-- Swagger: http://localhost:8080/swagger-ui.html
-- Salud: http://localhost:8080/actuator/health
+- API: http://192.168.0.150:8080
+- Swagger: http://192.168.0.150:8080/swagger-ui.html
+- Salud: http://192.168.0.150:8080/actuator/health
+- PostgreSQL desde el host: `192.168.0.150:5433` (publicado por el Compose del contenedor de base de datos).
 
-Flyway crea el esquema y los datos semilla al primer arranque. Si defines `ADMIN_PASSWORD`, se crea el usuario administrador (`ADMIN_EMAIL`).
+Antes de iniciar la API, el contenedor PostgreSQL debe estar activo, llamarse `web_db` y estar conectado a la red externa Docker `homelab_net`. La API conecta a `web_db:5432` dentro de esa red; `5433` es el puerto publicado para clientes que se conectan desde el host y no se usa entre contenedores. Flyway aplica las migraciones al arrancar la API. Si defines `ADMIN_PASSWORD`, se crea el usuario administrador (`ADMIN_EMAIL`) si todavía no existe.
 
 ## Probar
 
