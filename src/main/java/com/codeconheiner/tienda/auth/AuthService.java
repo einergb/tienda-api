@@ -7,7 +7,6 @@ import com.codeconheiner.tienda.common.ApiException;
 import com.codeconheiner.tienda.config.TiendaProperties;
 import com.codeconheiner.tienda.usuarios.Usuario;
 import com.codeconheiner.tienda.usuarios.UsuarioRepository;
-import java.util.Locale;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -28,7 +27,7 @@ public class AuthService {
     }
 
     public TokenResponse registrar(RegistroRequest r) {
-        String email = normalizarEmail(r.email());
+        String email = r.email().trim().toLowerCase();
         if (usuarios.existePorEmail(email)) {
             throw new ApiException(HttpStatus.CONFLICT, "El correo ya esta registrado");
         }
@@ -37,15 +36,11 @@ public class AuthService {
     }
 
     public TokenResponse login(LoginRequest r) {
-        Usuario u = usuarios.buscarPorEmail(normalizarEmail(r.email()))
+        Usuario u = usuarios.buscarPorEmail(r.email().trim())
                 .filter(Usuario::activo)
                 .filter(x -> encoder.matches(r.password(), x.passwordHash()))
                 .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "Credenciales invalidas"));
         return respuesta(u);
-    }
-
-    private static String normalizarEmail(String email) {
-        return email.trim().toLowerCase(Locale.ROOT);
     }
 
     private TokenResponse respuesta(Usuario u) {
