@@ -1,0 +1,18 @@
+package com.codeconheiner.tienda.catalogo;
+
+import java.math.BigDecimal;
+
+public record ProductoResponse(
+        Long id,
+        String sku,
+        String nombre,
+        String slug,
+        String descripcion,
+        BigDecimal precio,
+        Long categoriaId,
+        String categoria,
+        Long marcaId,
+        String marca,
+        Integer garantiaMeses,
+        int stockDisponible,
+        boolean activo) {}
