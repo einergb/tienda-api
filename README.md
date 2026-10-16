@@ -83,6 +83,18 @@ En la capa de servicio, una excepción `DataIntegrityViolationException` devuelv
 
 Los paquetes `carrito`, `inventario`, `pedidos`, `pagos` y `envios` aún no implementan endpoints ni lógica de negocio; sus tablas o migraciones no implican que esas funciones estén disponibles en la API.
 
+## Pruebas automatizadas
+
+```bash
+# Suite completa: unitarias, MockMvc e integración PostgreSQL
+mvn clean test
+
+# Solo integración contra PostgreSQL efímera (Testcontainers)
+mvn -Dtest=PostgresIntegrationTest test
+```
+
+Las pruebas unitarias y MVC no usan una base de datos. `PostgresIntegrationTest` levanta PostgreSQL 16 con Testcontainers, aplica las migraciones y prueba persistencia, autenticación, productos y el trigger de stock. Para que estas pruebas se ejecuten, Docker debe estar disponible; si no hay daemon, Testcontainers las marca como omitidas. Revisa el resumen Surefire y confirma `Skipped: 0` para saber que la parte de base de datos sí corrió. Nunca configura la base del homelab como destino de pruebas.
+
 ## Probar
 
 ```bash
