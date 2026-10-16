@@ -10,6 +10,7 @@
 - Se añadieron mensajes en español para los campos validados de productos.
 - Se añadieron pruebas de integración con PostgreSQL efímera para persistencia, auth, productos y trigger de stock con Testcontainers.
 - Se actualizó Testcontainers a `1.21.3` para usar un cliente Docker compatible con el daemon del homelab.
+- Surefire fija Docker API `1.40` para las pruebas de integración y evita la negociación predeterminada `1.32`.
 - Se mejoraron los mensajes de conflicto y de datos inválidos.
 
 ### Documentación

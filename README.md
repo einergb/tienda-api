@@ -93,7 +93,7 @@ mvn clean test
 mvn -Dtest=PostgresIntegrationTest test
 ```
 
-Las pruebas unitarias y MVC no usan una base de datos. `PostgresIntegrationTest` levanta PostgreSQL 16 con Testcontainers, aplica las migraciones y prueba persistencia, autenticación, productos y el trigger de stock. Para que estas pruebas se ejecuten, Docker debe estar disponible; si no hay daemon, Testcontainers las marca como omitidas. Revisa el resumen Surefire y confirma `Skipped: 0` para saber que la parte de base de datos sí corrió. Nunca configura la base del homelab como destino de pruebas.
+Las pruebas unitarias y MVC no usan una base de datos. `PostgresIntegrationTest` levanta PostgreSQL 16 con Testcontainers, aplica las migraciones y prueba persistencia, autenticación, productos y el trigger de stock. Surefire fija el Docker API del cliente de pruebas en `1.40` para compatibilidad con el daemon del homelab. Para que estas pruebas se ejecuten, Docker debe estar disponible; si no hay daemon, Testcontainers las marca como omitidas. Revisa el resumen Surefire y confirma `Skipped: 0` para saber que la parte de base de datos sí corrió. Nunca configura la base del homelab como destino de pruebas.
 
 ## Probar
 
