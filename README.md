@@ -42,6 +42,8 @@ Antes de iniciar la API, el contenedor PostgreSQL debe estar activo, llamarse `w
 | `DELETE` | `/api/admin/productos/{id}` | `ADMIN` | Desactiva el producto sin borrarlo físicamente (`204`). |
 | `GET` | `/actuator/health` | Público | Estado de salud de la API. |
 
+`ProductoRequest` valida SKU obligatorio (máximo 50 caracteres), nombre obligatorio (máximo 200), precio no negativo, categoría y stock obligatorios, y garantía/stock mínimo no negativos. Los mensajes de validación se devuelven en español dentro de `errores`, indexados por campo; la garantía y el stock mínimo son opcionales.
+
 Para las rutas protegidas, envía `Authorization: Bearer <token>`. Sin autenticación válida se responde `401`; con sesión válida pero sin el rol requerido, `403`. Los datos inválidos o el JSON mal formado responden `400`; las restricciones de datos responden `409`. El token expira según `tienda.jwt.expiracion-minutos`.
 
 ## Verificación manual en homelab
@@ -74,8 +76,10 @@ Los errores comprobados usan `ProblemDetail`. Sus mensajes principales son:
 | `403` | Rol insuficiente | `No tienes permisos para realizar esta operación.` |
 | `404` | Producto inexistente/no disponible | `Producto no encontrado` |
 | `409` | Correo duplicado | `El correo ya está registrado.` |
+| `409` | Excepción de integridad de datos | `La operación viola una restricción de datos (duplicado o referencia inexistente).` |
+| `500` | Error inesperado | `Error interno del servidor` (el detalle se registra en logs y no se entrega al cliente). |
 
-No se provocó un error `500` artificialmente; los errores internos se ocultan al cliente y se registran en los logs del servidor.
+En la capa de servicio, una excepción `DataIntegrityViolationException` devuelve `409`. Las reglas SQL de V3 pueden traducirse según el driver y la operación; la traducción específica de SQLSTATE `P0001` debe confirmarse con una prueba de integración contra PostgreSQL. El `500` se probó con una excepción inesperada controlada en `MockMvc`, no provocándolo en el homelab.
 
 Los paquetes `carrito`, `inventario`, `pedidos`, `pagos` y `envios` aún no implementan endpoints ni lógica de negocio; sus tablas o migraciones no implican que esas funciones estén disponibles en la API.
 

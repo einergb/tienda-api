@@ -22,6 +22,7 @@ import com.codeconheiner.tienda.config.TiendaProperties;
 import com.codeconheiner.tienda.usuarios.Usuario;
 import com.codeconheiner.tienda.usuarios.UsuarioRepository;
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -34,6 +35,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.test.context.support.WithMockUser;
@@ -150,6 +152,50 @@ class ApiEndpointsTest {
         mvc.perform(post("/api/admin/productos").contentType("application/json").content("{}"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.detail").value("No tienes permisos para realizar esta operación."));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void productoInvalidoDevuelve400ConMensajesEnEspanol() throws Exception {
+        String producto = """
+                {"sku":"","nombre":"","precio":-1,"categoriaId":null,"garantiaMeses":-1,"stock":-1,"stockMinimo":-1}
+                """;
+
+        mvc.perform(post("/api/admin/productos").contentType("application/json").content(producto))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("Los datos enviados no son válidos."))
+                .andExpect(jsonPath("$.errores.sku").value("El SKU es obligatorio"))
+                .andExpect(jsonPath("$.errores.nombre").value("El nombre es obligatorio"))
+                .andExpect(jsonPath("$.errores.precio").value("El precio debe ser mayor o igual a 0"))
+                .andExpect(jsonPath("$.errores.categoriaId").value("La categoría es obligatoria"))
+                .andExpect(jsonPath("$.errores.garantiaMeses").value("La garantía no puede ser negativa"))
+                .andExpect(jsonPath("$.errores.stock").value("El stock no puede ser negativo"))
+                .andExpect(jsonPath("$.errores.stockMinimo").value("El stock mínimo no puede ser negativo"));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void reglaDeNegocioSqlDevuelve409ConMensajeGenerico() throws Exception {
+        String producto = """
+                {"sku":"SQL-P0001","nombre":"Teclado","precio":1000,"categoriaId":1,"stock":3}
+                """;
+
+        mvc.perform(post("/api/admin/productos").contentType("application/json").content(producto))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail")
+                        .value("La operación viola una restricción de datos (duplicado o referencia inexistente)."));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void errorInternoDevuelve500SinFiltrarDetalle() throws Exception {
+        String producto = """
+                {"sku":"FORCE-500","nombre":"Teclado","precio":1000,"categoriaId":1,"stock":3}
+                """;
+
+        mvc.perform(post("/api/admin/productos").contentType("application/json").content(producto))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.detail").value("Error interno del servidor"));
     }
 
     @Test
@@ -281,6 +327,12 @@ class ApiEndpointsTest {
 
         @Override
         public ProductoResponse crear(ProductoRequest request) {
+            if ("SQL-P0001".equals(request.sku())) {
+                throw new DataIntegrityViolationException("Regla de negocio", new SQLException("P0001", "P0001"));
+            }
+            if ("FORCE-500".equals(request.sku())) {
+                throw new IllegalStateException("detalle interno confidencial");
+            }
             long id = siguienteId++;
             ProductoResponse producto = respuesta(id, request, true);
             productos.put(id, producto);

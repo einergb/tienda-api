@@ -7,6 +7,7 @@
 - Se mantiene una respuesta genérica para credenciales incorrectas, sin revelar si el correo está registrado.
 - Los errores de autenticación y autorización responden con `ProblemDetail`: HTTP `401` para autenticación requerida y HTTP `403` para permisos insuficientes.
 - Se añadieron mensajes de validación en español para login y registro, además de una respuesta clara para cuerpos JSON mal formados.
+- Se añadieron mensajes en español para los campos validados de productos.
 - Se mejoraron los mensajes de conflicto y de datos inválidos.
 
 ### Documentación
@@ -39,5 +40,7 @@
 
 ### Verificado localmente
 
-- `mvn test` compiló con `--release 21` y aprobó las 14 pruebas: 4 de `AuthService` y 10 de endpoints con `MockMvc`, sin usar PostgreSQL.
+- El ejecutor de pruebas de VS Code aprobó las 17 pruebas actuales: 4 de `AuthService` y 13 de endpoints con `MockMvc`, sin usar PostgreSQL.
+- Una ejecución anterior de `mvn test` compiló con `--release 21` y aprobó las 14 pruebas existentes antes de añadir estos tres casos.
+- Las pruebas de endpoints cubren validación de productos (`400`), integridad de datos (`409`) y error inesperado (`500` genérico).
 
