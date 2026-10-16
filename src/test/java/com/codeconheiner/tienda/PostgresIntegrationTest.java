@@ -6,11 +6,9 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
-import java.util.Objects;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -161,7 +159,7 @@ class PostgresIntegrationTest {
         String adminToken = tokenAdmin();
         String sufijo = UUID.randomUUID().toString().substring(0, 8);
         String sku = "IT-" + sufijo;
-        String nombre = "Producto integración " + sufijo;
+        String nombre = "ProductoIntegracion" + sufijo;
         Map<String, Object> producto = producto(sku, nombre, 1000, 3);
 
         ResponseEntity<JsonNode> creado = postJson("/api/admin/productos", producto, adminToken);
@@ -172,8 +170,7 @@ class PostgresIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT stock FROM inventario WHERE producto_id = ?", Integer.class, id))
                 .isEqualTo(3);
 
-        ResponseEntity<JsonNode> listado = get("/api/catalogo/productos?q="
-                + URLEncoder.encode(nombre, StandardCharsets.UTF_8));
+        ResponseEntity<JsonNode> listado = get("/api/catalogo/productos?q=" + nombre);
         assertThat(listado.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(contieneSku(body(listado), sku)).isTrue();
 
