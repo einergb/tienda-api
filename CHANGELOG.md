@@ -31,11 +31,13 @@
 - El login con credenciales inválidas, el acceso administrativo sin token y el token inválido respondieron HTTP `401` con `ProblemDetail`.
 - El registro con datos inválidos y JSON mal formado respondió HTTP `400` con mensajes en español.
 - La consulta de un producto inexistente respondió HTTP `404` con `ProblemDetail`.
+- El registro de un usuario de prueba respondió HTTP `201` y el login posterior HTTP `200`.
+- El JWT de ese usuario con rol `CLIENTE` fue rechazado en la ruta administrativa con HTTP `403` y `ProblemDetail`.
+- El login con rol `ADMIN` permitió crear el producto `PRUEBA-001` y la API respondió HTTP `201`.
+- El token `ADMIN` permitió desactivar lógicamente el producto de prueba; la API respondió HTTP `204`.
+- El token `ADMIN` permitió actualizar el producto de prueba; la API respondió HTTP `200` y el producto permaneció desactivado.
 
 ### Verificado localmente
 
-- `mvn test` compiló el proyecto con `--release 21` y ejecutó 4 pruebas unitarias, todas aprobadas.
+- `mvn test` compiló con `--release 21` y aprobó las 14 pruebas: 4 de `AuthService` y 10 de endpoints con `MockMvc`, sin usar PostgreSQL.
 
-### Pendiente de verificación
-
-- Verificar HTTP `403` con un token válido de cliente y probar las operaciones autenticadas con credenciales de prueba.
