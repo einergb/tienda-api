@@ -29,7 +29,7 @@ public class AuthService {
     public TokenResponse registrar(RegistroRequest r) {
         String email = r.email().trim().toLowerCase();
         if (usuarios.existePorEmail(email)) {
-            throw new ApiException(HttpStatus.CONFLICT, "El correo ya esta registrado");
+            throw new ApiException(HttpStatus.CONFLICT, "El correo ya está registrado.");
         }
         Usuario u = usuarios.crear(r.nombre().trim(), email, encoder.encode(r.password()), "CLIENTE");
         return respuesta(u);
@@ -39,7 +39,7 @@ public class AuthService {
         Usuario u = usuarios.buscarPorEmail(r.email().trim())
                 .filter(Usuario::activo)
                 .filter(x -> encoder.matches(r.password(), x.passwordHash()))
-                .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "Credenciales invalidas"));
+            .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "Correo o contraseña incorrectos."));
         return respuesta(u);
     }
 

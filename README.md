@@ -34,16 +34,121 @@ curl -s -X POST localhost:8080/api/admin/productos -H "Authorization: Bearer TOK
 curl -s localhost:8080/api/catalogo/productos
 ```
 
-## Estructura
+## Estructura del proyecto
 
+```text
+tienda-api/
+├── CHANGELOG.md
+├── Dockerfile
+├── docker-compose.yml
+├── pom.xml
+├── README.md
+└── src/main/
+  ├── java/com/codeconheiner/tienda/
+  │   ├── TiendaApplication.java
+  │   ├── auth/
+  │   │   ├── AuthController.java
+  │   │   ├── AuthService.java
+  │   │   ├── JwtAuthFilter.java
+  │   │   ├── JwtService.java
+  │   │   └── dto/ (LoginRequest, RegistroRequest, TokenResponse)
+  │   ├── catalogo/
+  │   │   ├── AdminProductoController.java
+  │   │   ├── CatalogoController.java
+  │   │   ├── CategoriaRepository.java
+  │   │   ├── CategoriaResponse.java
+  │   │   ├── ProductoRepository.java
+  │   │   ├── ProductoRequest.java
+  │   │   ├── ProductoResponse.java
+  │   │   └── ProductoService.java
+  │   ├── common/ (ApiException, GlobalExceptionHandler)
+  │   ├── config/ (AdminBootstrap, SecurityConfig, TiendaProperties)
+  │   ├── usuarios/ (Usuario, UsuarioRepository)
+  │   ├── carrito/     (paquete reservado)
+  │   ├── envios/      (paquete reservado)
+  │   ├── inventario/  (paquete reservado)
+  │   ├── pagos/       (paquete reservado)
+  │   └── pedidos/     (paquete reservado)
+  └── resources/
+    ├── application.yml
+    └── db/migration/
+      ├── V1__esquema_inicial.sql
+      ├── V2__datos_semilla.sql
+      └── V3__reglas_negocio.sql
 ```
-config/      propiedades de la tienda, seguridad (JWT), administrador inicial
-common/      ApiException y manejo global de errores (ProblemDetail)
-auth/        registro, login, JWT
-usuarios/    acceso a datos de usuarios
-catalogo/    productos, categorias (publico + /api/admin/productos)
-inventario/ carrito/ pedidos/ pagos/ envios/   (paquetes reservados)
-db/migration V1 esquema, V2 datos semilla
+
+Los paquetes marcados como reservados todavía no contienen lógica de negocio. La autenticación, el catálogo, la configuración y el acceso a usuarios sí están implementados.
+
+## UML de clases
+
+```mermaid
+classDiagram
+  class TiendaApplication
+  class AuthController
+  class AuthService
+  class JwtService
+  class JwtAuthFilter
+  class SecurityConfig
+  class OncePerRequestFilter
+  class AdminBootstrap
+  class TiendaProperties
+  class LoginRequest
+  class RegistroRequest
+  class TokenResponse
+  class Usuario
+  class UsuarioRepository
+  class CatalogoController
+  class AdminProductoController
+  class ProductoService
+  class ProductoRepository
+  class CategoriaRepository
+  class ProductoRequest
+  class ProductoResponse
+  class CategoriaResponse
+  class GlobalExceptionHandler
+  class ApiException
+  class JdbcTemplate
+  class ResponseEntityExceptionHandler
+
+  AuthController --> AuthService : registro y login
+  AuthController ..> LoginRequest
+  AuthController ..> RegistroRequest
+  AuthController ..> TokenResponse
+  AuthService --> UsuarioRepository
+  AuthService --> JwtService
+  AuthService --> TiendaProperties
+  AuthService ..> Usuario
+  AuthService ..> TokenResponse
+  UsuarioRepository --> JdbcTemplate
+  UsuarioRepository ..> Usuario
+
+  SecurityConfig --> JwtAuthFilter : registra filtro
+  JwtAuthFilter --|> OncePerRequestFilter
+  JwtAuthFilter --> JwtService : valida token
+  JwtService --> TiendaProperties
+  JwtService ..> Usuario : genera token
+  AdminBootstrap --> UsuarioRepository
+  AdminBootstrap --> TiendaProperties
+
+  CatalogoController --> ProductoService
+  CatalogoController --> CategoriaRepository
+  CatalogoController --> TiendaProperties
+  CatalogoController ..> CategoriaResponse
+  CatalogoController ..> ProductoResponse
+  AdminProductoController --> ProductoService
+  AdminProductoController ..> ProductoRequest
+  AdminProductoController ..> ProductoResponse
+  ProductoService --> ProductoRepository
+  ProductoService --> TiendaProperties
+  ProductoService ..> ProductoRequest
+  ProductoService ..> ProductoResponse
+  ProductoRepository --> JdbcTemplate
+  ProductoRepository ..> ProductoResponse
+  CategoriaRepository --> JdbcTemplate
+  CategoriaRepository ..> CategoriaResponse
+
+  GlobalExceptionHandler --|> ResponseEntityExceptionHandler
+  GlobalExceptionHandler ..> ApiException : transforma en ProblemDetail
 ```
 
 ## Reutilizar la plantilla

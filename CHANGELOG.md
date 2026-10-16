@@ -2,6 +2,18 @@
 
 ## No publicado
 
+### Autenticación y errores HTTP
+
+- Se mantiene una respuesta genérica para credenciales incorrectas, sin revelar si el correo está registrado.
+- Los errores de autenticación y autorización responden con `ProblemDetail`: HTTP `401` para autenticación requerida y HTTP `403` para permisos insuficientes.
+- Se añadieron mensajes de validación en español para login y registro, además de una respuesta clara para cuerpos JSON mal formados.
+- Se mejoraron los mensajes de conflicto y de datos inválidos.
+
+### Documentación
+
+- Se amplió el README con el árbol del proyecto y un diagrama UML Mermaid de las clases principales.
+- Se identificaron los paquetes reservados que aún no tienen lógica de negocio.
+
 ### Despliegue
 
 - Docker Compose inicia solo la API; no crea un segundo contenedor PostgreSQL.
@@ -19,4 +31,5 @@
 ### Pendiente de verificación
 
 - Ejecutar las pruebas automatizadas con Maven.
+- Verificar las respuestas HTTP de autenticación, autorización y validación en ejecución.
 - Validar los endpoints funcionales de la API desde un equipo con conectividad al homelab.

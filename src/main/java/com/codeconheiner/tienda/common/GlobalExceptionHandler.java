@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -30,9 +31,9 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(DataIntegrityViolationException.class)
     ProblemDetail handleIntegrity(DataIntegrityViolationException e) {
-        log.warn("Violacion de integridad: {}", e.getMostSpecificCause().getMessage());
+        log.warn("Violación de integridad: {}", e.getMostSpecificCause().getMessage());
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT,
-                "La operacion viola una restriccion de datos (duplicado o referencia inexistente)");
+            "La operación viola una restricción de datos (duplicado o referencia inexistente).");
     }
 
     @ExceptionHandler(Exception.class)
@@ -48,8 +49,16 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         for (FieldError fe : ex.getBindingResult().getFieldErrors()) {
             errores.putIfAbsent(fe.getField(), fe.getDefaultMessage());
         }
-        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Datos invalidos");
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Los datos enviados no son válidos.");
         pd.setProperty("errores", errores);
         return ResponseEntity.badRequest().body(pd);
+    }
+
+    @Override
+    protected ResponseEntity<Object> handleHttpMessageNotReadable(HttpMessageNotReadableException ex,
+            HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(status,
+                "El cuerpo de la solicitud no contiene JSON válido.");
+        return handleExceptionInternal(ex, pd, headers, status, request);
     }
 }
