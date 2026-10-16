@@ -9,6 +9,7 @@
 - Se añadieron mensajes de validación en español para login y registro, además de una respuesta clara para cuerpos JSON mal formados.
 - Se añadieron mensajes en español para los campos validados de productos.
 - Se añadieron pruebas de integración con PostgreSQL efímera para persistencia, auth, productos y trigger de stock con Testcontainers.
+- Se actualizó Testcontainers a `1.21.3` para usar un cliente Docker compatible con el daemon del homelab.
 - Se mejoraron los mensajes de conflicto y de datos inválidos.
 
 ### Documentación
