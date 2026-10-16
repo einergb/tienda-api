@@ -27,9 +27,15 @@
 - La API se reconstruyó y reinició correctamente mediante Docker Compose.
 - Flyway validó las tres migraciones y creó el historial mediante un baseline en la versión `3`, sin ejecutar nuevamente las migraciones anteriores sobre el esquema existente.
 - El endpoint `http://192.168.0.150:8080/actuator/health` respondió HTTP `200` con estado `UP`.
+- Los endpoints públicos de tienda, categorías y productos respondieron HTTP `200`.
+- El login con credenciales inválidas, el acceso administrativo sin token y el token inválido respondieron HTTP `401` con `ProblemDetail`.
+- El registro con datos inválidos y JSON mal formado respondió HTTP `400` con mensajes en español.
+- La consulta de un producto inexistente respondió HTTP `404` con `ProblemDetail`.
+
+### Verificado localmente
+
+- `mvn test` compiló el proyecto con `--release 21` y ejecutó 4 pruebas unitarias, todas aprobadas.
 
 ### Pendiente de verificación
 
-- Ejecutar las pruebas automatizadas con Maven.
-- Verificar las respuestas HTTP de autenticación, autorización y validación en ejecución.
-- Validar los endpoints funcionales de la API desde un equipo con conectividad al homelab.
+- Verificar HTTP `403` con un token válido de cliente y probar las operaciones autenticadas con credenciales de prueba.
