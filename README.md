@@ -36,7 +36,12 @@ Antes de iniciar la API, el contenedor PostgreSQL debe estar activo, llamarse `w
 - Reseñas con compra verificada: solo se permite reseñar con un pedido `ENTREGADO` (trigger de V3); lectura pública por producto y edición/eliminación propias.
 - Inventario: consulta de stock por producto y listado administrativo de productos bajo el umbral (`v_stock_bajo`).
 - Expiración automática de reservas: una tarea programada (`TareaExpiracionReservas`, cada 60 s) ejecuta `expirar_reservas()`, que cancela pedidos `PENDIENTE` vencidos y libera el stock.
+- Facturas: `GET /api/pedidos/{id}/factura` (y su versión admin) emite una factura numerada (`FAC-AAAA-NNNNNN`) para pedidos pagados; la emisión es idempotente (una sola factura por pedido).
+- Reportes administrativos: resumen de ventas por rango (`/api/admin/reportes/ventas`) y estado del inventario (`/api/admin/reportes/inventario`).
+- Pasarelas de pago (Wompi y ePayco): el backend orquesta el checkout con `POST /api/pagos/sesion`, devuelve los datos de la sesión al frontend y confirma el pago por webhook (`POST /api/webhooks/wompi|epayco`). La idempotencia es doble: `idempotency-key` saliente por intento y deduplicación de webhooks entrantes.
+- Limitación de tasa por IP en `/api/**`: límite general (300/min por defecto) y límite más estricto en las rutas de autenticación (10/min); los webhooks quedan excluidos.
 - Respuestas de error en formato `ProblemDetail`, con validaciones en español y códigos HTTP diferenciados; las reglas de negocio de la base (`RAISE EXCEPTION`, SQLSTATE `P0001`) responden `422` con el mensaje del trigger.
+- Servicios organizados con principios SOLID: cada pasarela implementa la interfaz `PasarelaPago` y se resuelve por `PasarelaRegistry` (OCP); la verificación de firmas se separa por pasarela (`VerificadorFirmaWebhook`, ISP); los totales del checkout quedan aislados en `CalculadoraTotales` (SRP).
 
 ## API disponible
 
@@ -71,12 +76,19 @@ Antes de iniciar la API, el contenedor PostgreSQL debe estar activo, llamarse `w
 | `GET` | `/api/admin/inventario/stock-bajo` | `ADMIN` | Productos activos con `stock disponible <= stock mínimo` (vista `v_stock_bajo`). |
 | `GET` | `/api/pedidos` | `CLIENTE/ADMIN` | Lista los pedidos del usuario autenticado, con sus items. |
 | `GET` | `/api/pedidos/{id}` | `CLIENTE/ADMIN` | Obtiene el detalle de un pedido del usuario autenticado. |
+| `GET` | `/api/pedidos/{id}/factura` | `CLIENTE/ADMIN` | Emite (o recupera) la factura del pedido propio (`200`). Solo pedidos pagados; `409` en otro estado. |
 | `POST` | `/api/pedidos` | `CLIENTE/ADMIN` | Checkout (`201`): requiere `direccionId` y opcionalmente `cuponId`. Calcula totales, reserva el stock y vacía el carrito. |
 | `GET` | `/api/admin/pedidos` | `ADMIN` | Lista todos los pedidos; acepta el filtro `?estado=`. |
 | `GET` | `/api/admin/pedidos/{id}` | `ADMIN` | Detalle de cualquier pedido. |
+| `GET` | `/api/admin/pedidos/{id}/factura` | `ADMIN` | Emite (o recupera) la factura de cualquier pedido (`200`). |
 | `PUT` | `/api/admin/pedidos/{id}/estado` | `ADMIN` | Transiciona el estado; la máquina de estados la valida V3 (`422` si no está permitida). |
 | `GET` | `/api/pagos/pedido/{pedidoId}` | `CLIENTE/ADMIN` | Lista los pagos asociados a un pedido. |
 | `POST` | `/api/pagos` | `CLIENTE/ADMIN` | Registra un intento de pago (`201`). `estado` opcional (`PENDIENTE` por defecto; `APROBADO`/`RECHAZADO`). Un pago aprobado marca el pedido `PAGADO`. |
+| `POST` | `/api/pagos/sesion` | `CLIENTE/ADMIN` | Crea (o reutiliza, si se repite la `claveIdempotencia`) la transacción en la pasarela y devuelve `pagoId`, `referencia`, `sesionId`, `urlPago` y la clave de idempotencia (`201`). `400` si la pasarela no está soportada. |
+| `GET` | `/api/admin/reportes/ventas` | `ADMIN` | Resumen de ventas del rango `?desde=&hasta=` (ISO-8601, por defecto últimos 30 días): pedidos, ingresos, ticket promedio, por estado, top de productos y ventas por día. `400` si el rango es inválido. |
+| `GET` | `/api/admin/reportes/inventario` | `ADMIN` | Estado del inventario activo: productos, unidades, valor y productos bajo el umbral. |
+| `POST` | `/api/webhooks/wompi` | Público (firmado) | Recibe la notificación de Wompi; valida `X-Event-Checksum` (`SHA-256(payload + integrity-secret)`) y confirma el pago. `401` si la firma es inválida. |
+| `POST` | `/api/webhooks/epayco` | Público (firmado) | Recibe la notificación de ePayco; valida `x-signature` (`SHA-256(payload + private-key)`) y confirma el pago. `401` si la firma es inválida. |
 | `GET` | `/api/envios/pedido/{pedidoId}` | `CLIENTE/ADMIN` | Obtiene el estado de envío de un pedido. |
 | `GET` | `/api/admin/envios` | `ADMIN` | Lista envíos; acepta `?pedidoId=` y `?estado=`. |
 | `GET` | `/api/admin/envios/{id}` | `ADMIN` | Detalle de un envío. |
@@ -96,6 +108,60 @@ Antes de iniciar la API, el contenedor PostgreSQL debe estar activo, llamarse `w
 `ProductoRequest` valida SKU obligatorio (máximo 50 caracteres), nombre obligatorio (máximo 200), precio no negativo, categoría y stock obligatorios, y garantía/stock mínimo no negativos. Los mensajes de validación se devuelven en español dentro de `errores`, indexados por campo; la garantía y el stock mínimo son opcionales.
 
 Para las rutas protegidas, envía `Authorization: Bearer <token>`. Sin autenticación válida se responde `401`; con sesión válida pero sin el rol requerido, `403`. Los datos inválidos o el JSON mal formado responden `400`; las restricciones de datos responden `409` y las reglas de negocio de la base de datos, `422`. El token expira según `tienda.jwt.expiracion-minutos` (el refresh token dura 7 días).
+
+## Pasarelas de pago y webhooks
+
+El backend es el único que conoce las llaves de la pasarela. El flujo es:
+
+1. El cliente hace el checkout (`POST /api/pedidos`) y recibe el pedido en `PENDIENTE`.
+2. El cliente pide `POST /api/pagos/sesion` con `pedidoId`, `pasarela` (`WOMPI`/`EPAYCO`) y, en reintentos, la misma `claveIdempotencia` que recibió antes.
+3. La API crea el intento de pago (o reutiliza el existente si la clave ya se usó), llama a la pasarela y devuelve `pagoId`, `referencia`, `sesionId` y `urlPago`. Con `urlPago` el frontend redirige al checkout de la pasarela.
+4. La pasarela notifica el resultado a `POST /api/webhooks/wompi` o `POST /api/webhooks/epayco`. La API valida la firma, verifica que el monto coincida con el pago guardado y cambia el pago a `APROBADO`/`RECHAZADO`; un pago aprobado dispara el trigger que marca el pedido `PAGADO` y descuenta stock.
+5. El cliente consulta `GET /api/pedidos`/`GET /api/pagos/pedido/{id}` y obtiene la factura con `GET /api/pedidos/{id}/factura`.
+
+**Idempotencia saliente:** cada intento guarda una `idempotency_key` (UUID) y la `referencia` enviada a la pasarela; los reintentos reutilizan la misma clave para no cobrar dos veces. Un índice único parcial en `pagos` impide duplicar la clave.
+
+**Idempotencia entrante:** cada notificación se registra en `webhook_eventos` con `UNIQUE (pasarela, evento_id)`. Una notificación repetida responde `200` con `{"estado":"duplicado"}`; un evento de un pedido ya confirmado responde `{"estado":"ya-procesado"}` y uno no reconocido, `{"estado":"ignorado"}`.
+
+**Firmas:** Wompi envía `X-Event-Checksum = SHA-256(cuerpo + WOMPI_INTEGRITY_SECRET)`; ePayco envía `x-signature = SHA-256(cuerpo + EPAYCO_PRIVATE_KEY)`. Sin secreto configurado, toda firma se rechaza. Los webhooks están excluidos del límite de tasa para que la pasarela pueda reintentar.
+
+**Modo de operación (`PAGOS_MODO`):**
+
+- `simulado` (por defecto): no se llama a ninguna API externa; `sesionId` es `SIM-<referencia>` y `urlPago` es `null`. Útil para desarrollo y pruebas.
+- `real`: usa los endpoints sandbox de Wompi/ePayco configurados en las variables `WOMPI_*` y `EPAYCO_*`.
+
+## Limitación de tasa
+
+`RateLimitFilter` aplica una ventana deslizante en memoria por IP del cliente (usa `X-Forwarded-For` si existe) sobre `/api/**`:
+
+- Rutas generales: `RATE_LIMIT_MAXIMO` peticiones por ventana (por defecto `300`).
+- `/api/auth/login`, `/api/auth/registro` y `/api/auth/refresh`: `RATE_LIMIT_AUTH_MAXIMO` (por defecto `10`), para frenar la fuerza bruta.
+- `/api/webhooks/**` queda fuera del filtro.
+- Al superar el límite responde `429` con `ProblemDetail` y cabecera `Retry-After` (ventana de 60 s configurable en `tienda.rate-limit.ventana-segundos`).
+
+El estado vive en memoria por instancia; si se despliegan varias réplicas, cada una lleva su propio conteo.
+
+## Diseño SOLID
+
+- **SRP:** `CalculadoraTotales` calcula subtotal, descuento, IVA, envío y total; `PedidoService` solo orquesta el checkout. `FacturaService`, `ReporteService` y `WebhookPagoService` tienen responsabilidades acotadas.
+- **OCP:** nuevas pasarelas se añaden implementando `PasarelaPago` y registrándose como bean; `PasarelaRegistry` las resuelve por nombre sin modificar el servicio.
+- **LSP/ISP:** `VerificadorFirmaWebhook` y `EventoWebhookParser` son contratos pequeños, implementados de forma independiente por Wompi y ePayco.
+- **DIP:** `PagoService` depende de las interfaces `PasarelaPago`/`VerificadorFirmaWebhook` y del repositorio, no de clases concretas de la pasarela.
+
+## Configuración de entorno
+
+| Variable | Por defecto | Uso |
+| --- | --- | --- |
+| `RATE_LIMIT_MAXIMO` | `300` | Peticiones por ventana y por IP en rutas generales. |
+| `RATE_LIMIT_AUTH_MAXIMO` | `10` | Peticiones por ventana y por IP en login/registro/refresh. |
+| `PAGOS_MODO` | `simulado` | `simulado` (sin APIs externas) o `real`. |
+| `WOMPI_API_URL` | sandbox | Base de la API de Wompi. |
+| `WOMPI_PUBLIC_KEY` / `WOMPI_PRIVATE_KEY` | vacío | Llaves de Wompi. |
+| `WOMPI_INTEGRITY_SECRET` | vacío | Secreto para validar `X-Event-Checksum`. |
+| `WOMPI_REDIRECT_URL` | `http://localhost:5173/pago/exitoso` | Retorno del checkout. |
+| `EPAYCO_API_URL` / `EPAYCO_APIIFY_URL` | producción/sandbox | Bases de ePayco. |
+| `EPAYCO_PUBLIC_KEY` / `EPAYCO_PRIVATE_KEY` | vacío | Llaves de ePayco; la privada valida `x-signature`. |
+
 
 ## Verificación manual en homelab
 
@@ -130,6 +196,11 @@ Los errores comprobados usan `ProblemDetail`. Sus mensajes principales son:
 | `409` | Correo duplicado | `El correo ya está registrado.` |
 | `409` | Excepción de integridad de datos | `La operación viola una restricción de datos (duplicado o referencia inexistente).` |
 | `422` | Regla de negocio en la base (SQLSTATE `P0001`) | El mensaje en español del `RAISE EXCEPTION` de V3, p. ej. `Transicion de estado no permitida: ENTREGADO -> PAGADO`. |
+| `429` | Límite de tasa superado | `Demasiadas solicitudes desde tu conexión. Intenta de nuevo más tarde.` (incluye la cabecera `Retry-After`). |
+| `400` | Pasarela no soportada | `Pasarela no soportada`. |
+| `400` | Payload de webhook ilegible | `Payload de webhook inválido`. |
+| `401` | Firma de webhook inválida | `Firma del webhook inválida`. |
+| `409` | Factura de pedido no pagado | `La factura solo se emite para pedidos pagados`. |
 | `500` | Error inesperado | `Error interno del servidor` (el detalle se registra en logs y no se entrega al cliente). |
 
 En la capa de servicio, una excepción `IntegrityViolationException` sin regla de negocio responde `409`. Las reglas SQL de V3 (`RAISE EXCEPTION`, SQLSTATE `P0001`) se detectan recorriendo la cadena de causas hasta el `SQLException` y responden `422` con el mensaje del trigger, sin el prefijo `ERROR:` ni el detalle `Where:` del driver. Ese mapeo está verificado por `ApiEndpointsTest` (mensaje simulado) y por `FlujoCompletoPostgresTest` contra PostgreSQL real. El `500` se probó con una excepción inesperada controlada en `MockMvc`, no provocándolo en el homelab.
@@ -140,10 +211,10 @@ En la capa de servicio, una excepción `IntegrityViolationException` sin regla d
 # Unitarias y endpoints MockMvc
 mvn clean test
 
-# SQL de repositorios contra la BD auxiliar local (incluye checkout, cupones, reseñas y reservas)
+# SQL de repositorios contra la BD auxiliar local (incluye checkout, cupones, reseñas, facturas, webhooks y reportes)
 mvn -Dtest=RepositoriosPostgresTest test
 
-# Flujo completo por HTTP contra la BD auxiliar local (registro, checkout, pago, estados, 422)
+# Flujo completo por HTTP contra la BD auxiliar local (registro, checkout, sesión de pasarela, webhook, factura, reportes)
 mvn -Dtest=FlujoCompletoPostgresTest test
 
 # Integración contra PostgreSQL efímera (Testcontainers)
@@ -152,7 +223,7 @@ mvn -Dtest=PostgresIntegrationTest test
 
 ### PostgreSQL auxiliar local
 
-`RepositoriosPostgresTest` y `FlujoCompletoPostgresTest` se conectan explícitamente a `localhost:5432/tienda_db` con `tienda_user`; no leen `DB_URL` y no apuntan a `web_db`. Al iniciar el contexto, Flyway aplica V1–V4 si la base está vacía.
+`RepositoriosPostgresTest` y `FlujoCompletoPostgresTest` se conectan explícitamente a `localhost:5432/tienda_db` con `tienda_user`; no leen `DB_URL` y no apuntan a `web_db`. Al iniciar el contexto, Flyway aplica V1–V5 si la base está vacía.
 
 En el servidor de pruebas, revisa primero si el contenedor ya existe:
 
@@ -236,16 +307,19 @@ tienda-api/
   │   ├── TiendaApplication.java
   │   ├── auth/ (AuthController, AuthService, JwtService, JwtAuthFilter, RefreshTokenRepository)
   │   ├── catalogo/ (catálogo público + AdminProductoController con imágenes y atributos)
-  │   ├── common/ (ApiException, GlobalExceptionHandler)
-  │   ├── config/ (AdminBootstrap, SecurityConfig, TiendaProperties, TareaExpiracionReservas)
+  │   ├── common/ (ApiException, GlobalExceptionHandler, Hashes, ratelimit/)
+  │   ├── config/ (AdminBootstrap, SecurityConfig, TiendaProperties, RateLimitFilter, TareaExpiracionReservas)
   │   ├── cupones/ (CuponController, AdminCuponController, CuponService)
   │   ├── direcciones/ (DireccionController, DireccionService)
   │   ├── envios/ (EnvioController, AdminEnvioController)
+  │   ├── facturas/ (FacturaService, FacturaRepository, dto/)
   │   ├── inventario/ (InventarioController, AdminInventarioController)
-  │   ├── pagos/ (PagoController, PagoService)
-  │   ├── pedidos/ (PedidoController, AdminPedidoController, PedidoService)
+  │   ├── pagos/ (PagoController, PagoService, pasarela/ con PasarelaPago, Wompi, Epayco, firmas)
+  │   ├── pedidos/ (PedidoController, AdminPedidoController, PedidoService, CalculadoraTotales)
+  │   ├── reportes/ (ReporteController, ReporteService, dto/)
   │   ├── resenas/ (ResenaController, ResenaService)
   │   ├── usuarios/ (Usuario, UsuarioRepository)
+  │   ├── webhooks/ (WebhookController, WebhookPagoService, parsers por pasarela)
   │   └── carrito/ (CarritoController, CarritoService)
   └── resources/
     ├── application.yml
@@ -253,10 +327,11 @@ tienda-api/
       ├── V1__esquema_inicial.sql
       ├── V2__datos_semilla.sql
       ├── V3__reglas_negocio.sql
-      └── V4__refresh_tokens.sql
+      ├── V4__refresh_tokens.sql
+      └── V5__facturas_webhooks_idempotencia.sql
 ```
 
-La aplicación incluye autenticación con sesiones, catálogo con imágenes y atributos, carrito, direcciones, cupones, checkout, pagos, estados de pedido, envíos, reseñas, inventario y configuración.
+La aplicación incluye autenticación con sesiones, catálogo con imágenes y atributos, carrito, direcciones, cupones, checkout, pagos con pasarelas y webhooks, estados de pedido, facturas, envíos, reseñas, inventario, reportes y configuración.
 
 ## UML de clases
 
@@ -288,6 +363,22 @@ classDiagram
   class ApiException
   class JdbcTemplate
   class ResponseEntityExceptionHandler
+  class CalculadoraTotales
+  class FacturaService
+  class FacturaRepository
+  class ReporteService
+  class ReporteRepository
+  class ReporteController
+  class PasarelaPago
+  class WompiPasarela
+  class EpaycoPasarela
+  class PasarelaRegistry
+  class WebhookController
+  class WebhookPagoService
+  class WebhookEventosRepository
+  class VerificadorFirmaWebhook
+  class RateLimitFilter
+  class RateLimiter
 
   AuthController --> AuthService : registro y login
   AuthController ..> LoginRequest
@@ -328,6 +419,27 @@ classDiagram
 
   GlobalExceptionHandler --|> ResponseEntityExceptionHandler
   GlobalExceptionHandler ..> ApiException : transforma en ProblemDetail
+
+  PedidoService --> CalculadoraTotales : totales del checkout
+  CalculadoraTotales --> CuponService : descuento
+  PedidoController --> FacturaService
+  AdminPedidoController --> FacturaService
+  FacturaService --> FacturaRepository
+  FacturaRepository --> JdbcTemplate
+  ReporteController --> ReporteService
+  ReporteService --> ReporteRepository
+  ReporteService --> InventarioRepository
+  ReporteRepository --> JdbcTemplate
+
+  PagoService --> PasarelaRegistry
+  PasarelaRegistry --> PasarelaPago
+  PasarelaPago <|.. WompiPasarela
+  PasarelaPago <|.. EpaycoPasarela
+  WebhookController --> VerificadorFirmaWebhook : valida firma
+  WebhookController --> WebhookPagoService
+  WebhookPagoService --> WebhookEventosRepository
+  WebhookPagoService --> PagoRepository
+  RateLimitFilter --> RateLimiter
 ```
 
 ## Reutilizar la plantilla

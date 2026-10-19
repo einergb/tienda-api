@@ -1,5 +1,7 @@
 package com.codeconheiner.tienda.pedidos;
 
+import com.codeconheiner.tienda.facturas.FacturaService;
+import com.codeconheiner.tienda.facturas.dto.FacturaResponse;
 import com.codeconheiner.tienda.pedidos.dto.PedidoEstadoRequest;
 import com.codeconheiner.tienda.pedidos.dto.PedidoResponse;
 import jakarta.validation.Valid;
@@ -18,9 +20,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminPedidoController {
 
     private final PedidoService service;
+    private final FacturaService facturas;
 
-    public AdminPedidoController(PedidoService service) {
+    public AdminPedidoController(PedidoService service, FacturaService facturas) {
         this.service = service;
+        this.facturas = facturas;
     }
 
     @GetMapping
@@ -36,5 +40,11 @@ public class AdminPedidoController {
     @PutMapping("/{id}/estado")
     public PedidoResponse cambiarEstado(@PathVariable Long id, @Valid @RequestBody PedidoEstadoRequest request) {
         return service.cambiarEstado(id, request.estado());
+    }
+
+    /** Factura de cualquier pedido (emisión idempotente). */
+    @GetMapping("/{id}/factura")
+    public FacturaResponse factura(@PathVariable Long id) {
+        return facturas.emitirAdmin(id);
     }
 }

@@ -1,5 +1,7 @@
 package com.codeconheiner.tienda.pedidos;
 
+import com.codeconheiner.tienda.facturas.FacturaService;
+import com.codeconheiner.tienda.facturas.dto.FacturaResponse;
 import com.codeconheiner.tienda.pedidos.dto.PedidoRequest;
 import com.codeconheiner.tienda.pedidos.dto.PedidoResponse;
 import com.codeconheiner.tienda.usuarios.UsuarioService;
@@ -20,10 +22,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class PedidoController {
 
     private final PedidoService service;
+    private final FacturaService facturas;
     private final UsuarioService usuarioService;
 
-    public PedidoController(PedidoService service, UsuarioService usuarioService) {
+    public PedidoController(PedidoService service, FacturaService facturas, UsuarioService usuarioService) {
         this.service = service;
+        this.facturas = facturas;
         this.usuarioService = usuarioService;
     }
 
@@ -41,6 +45,12 @@ public class PedidoController {
     @ResponseStatus(HttpStatus.CREATED)
     public PedidoResponse crear(@Valid @RequestBody PedidoRequest request) {
         return service.crear(obtenerUsuarioId(), request);
+    }
+
+    /** Emite (o recupera) la factura del pedido propio; solo pedidos pagados. */
+    @GetMapping("/{id}/factura")
+    public FacturaResponse factura(@PathVariable Long id) {
+        return facturas.emitir(obtenerUsuarioId(), id);
     }
 
     private Long obtenerUsuarioId() {

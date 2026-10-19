@@ -25,7 +25,9 @@ class CarritoServiceTest {
             "Tienda", "COP", new BigDecimal("0.19"), new BigDecimal("200000"), 10000, 5, 15,
             new TiendaProperties.Jwt("test-only-secret-with-at-least-32-bytes", 30),
             new TiendaProperties.Admin("admin@example.com", ""),
-            new TiendaProperties.Cors(List.of("http://localhost:5173")));
+            new TiendaProperties.Cors(List.of("http://localhost:5173")),
+            new TiendaProperties.RateLimit(300, 10, 60),
+            TiendaProperties.Pagos.simulados());
 
     private final FakeCarritoRepository repo = new FakeCarritoRepository();
     private final CarritoService service = new CarritoService(repo, props);

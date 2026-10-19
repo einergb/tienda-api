@@ -24,6 +24,8 @@ import com.codeconheiner.tienda.cupones.CuponRepository;
 import com.codeconheiner.tienda.cupones.CuponService;
 import com.codeconheiner.tienda.cupones.dto.CuponRequest;
 import com.codeconheiner.tienda.cupones.dto.CuponResponse;
+import com.codeconheiner.tienda.facturas.FacturaRepository;
+import com.codeconheiner.tienda.facturas.FacturaService;
 import com.codeconheiner.tienda.direcciones.DireccionRepository;
 import com.codeconheiner.tienda.direcciones.DireccionService;
 import com.codeconheiner.tienda.direcciones.dto.DireccionRequest;
@@ -38,8 +40,22 @@ import com.codeconheiner.tienda.inventario.InventarioRepository;
 import com.codeconheiner.tienda.inventario.InventarioService;
 import com.codeconheiner.tienda.pagos.PagoRepository;
 import com.codeconheiner.tienda.pagos.PagoService;
+import com.codeconheiner.tienda.pagos.pasarela.EpaycoFirmaWebhook;
+import com.codeconheiner.tienda.pagos.pasarela.EpaycoPasarela;
+import com.codeconheiner.tienda.pagos.pasarela.FirmaWebhookRegistry;
+import com.codeconheiner.tienda.pagos.pasarela.PasarelaRegistry;
+import com.codeconheiner.tienda.pagos.pasarela.WompiFirmaWebhook;
+import com.codeconheiner.tienda.pagos.pasarela.WompiPasarela;
+import com.codeconheiner.tienda.pedidos.CalculadoraTotales;
 import com.codeconheiner.tienda.pedidos.PedidoRepository;
 import com.codeconheiner.tienda.pedidos.PedidoService;
+import com.codeconheiner.tienda.reportes.ReporteRepository;
+import com.codeconheiner.tienda.reportes.ReporteService;
+import com.codeconheiner.tienda.webhooks.EpaycoEventoParser;
+import com.codeconheiner.tienda.webhooks.WebhookEventosRepository;
+import com.codeconheiner.tienda.webhooks.WebhookPagoService;
+import com.codeconheiner.tienda.webhooks.WompiEventoParser;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.codeconheiner.tienda.envios.EnvioRepository;
 import com.codeconheiner.tienda.envios.EnvioService;
 import com.codeconheiner.tienda.usuarios.UsuarioService;
@@ -385,7 +401,11 @@ class ApiEndpointsTest {
                     "Tienda de prueba", "COP", new BigDecimal("0.19"), BigDecimal.ZERO, 10000, 5, 15,
                     new TiendaProperties.Jwt("endpoint-tests-secret-at-least-32-bytes", 120),
                     new TiendaProperties.Admin("admin@example.com", ""),
-                    new TiendaProperties.Cors(List.of("http://localhost:5173")));
+                    new TiendaProperties.Cors(List.of("http://localhost:5173")),
+                    new TiendaProperties.RateLimit(300, 10, 60),
+                    new TiendaProperties.Pagos("simulado",
+                            new TiendaProperties.Pagos.Wompi(null, null, null, "wompi-test-secreto", null),
+                            new TiendaProperties.Pagos.Epayco(null, null, null, "epayco-test-llave")));
         }
 
         @Bean
@@ -399,15 +419,32 @@ class ApiEndpointsTest {
         }
 
         @Bean
-        RefreshTokenRepository refreshTokenRepository() {
+        com.codeconheiner.tienda.auth.RefreshTokenStore refreshTokenRepository() {
             return new InMemoryRefreshTokenRepository();
         }
 
         @Bean
-        AuthService authService(InMemoryUsuarioRepository usuarios, RefreshTokenRepository refreshTokenRepository,
+        AuthService authService(InMemoryUsuarioRepository usuarios,
+                com.codeconheiner.tienda.auth.RefreshTokenStore refreshTokenRepository,
                 JwtService jwtService, TiendaProperties properties,
-                org.springframework.security.crypto.password.PasswordEncoder encoder) {
-            return new AuthService(usuarios, refreshTokenRepository, encoder, jwtService, properties);
+                org.springframework.security.crypto.password.PasswordEncoder encoder,
+                com.codeconheiner.tienda.seguridad.Auditoria auditoria) {
+            return new AuthService(usuarios, refreshTokenRepository, encoder, jwtService, properties, auditoria);
+        }
+
+        @Bean
+        com.codeconheiner.tienda.seguridad.Auditoria auditoria() {
+            return new com.codeconheiner.tienda.seguridad.Auditoria(null, null) {
+                @Override
+                public void registrar(Long usuarioId, String accion, String entidad, String entidadId,
+                        java.util.Map<String, ?> detalle) {
+                }
+
+                @Override
+                public void registrarActual(String accion, String entidad, String entidadId,
+                        java.util.Map<String, ?> detalle) {
+                }
+            };
         }
 
         @Bean
@@ -481,9 +518,16 @@ class ApiEndpointsTest {
         }
 
         @Bean
+        CalculadoraTotales calculadoraTotales(TiendaProperties properties, CuponService cuponService) {
+            return new CalculadoraTotales(properties, cuponService);
+        }
+
+        @Bean
         PedidoService pedidoService(PedidoRepository pedidoRepository, CarritoRepository carritoRepository,
-                DireccionService direccionService, CuponService cuponService, TiendaProperties properties) {
-            return new PedidoService(pedidoRepository, carritoRepository, direccionService, cuponService, properties);
+                DireccionService direccionService, CalculadoraTotales calculadoraTotales,
+                com.codeconheiner.tienda.seguridad.Auditoria auditoria) {
+            return new PedidoService(pedidoRepository, carritoRepository, direccionService, calculadoraTotales,
+                    auditoria);
         }
 
         @Bean
@@ -492,8 +536,64 @@ class ApiEndpointsTest {
         }
 
         @Bean
-        PagoService pagoService(PagoRepository pagoRepository, PedidoRepository pedidoRepository) {
-            return new PagoService(pagoRepository, pedidoRepository);
+        PasarelaRegistry pasarelaRegistry(TiendaProperties properties) {
+            return new PasarelaRegistry(
+                    List.of(new WompiPasarela(properties), new EpaycoPasarela(properties)));
+        }
+
+        @Bean
+        PagoService pagoService(PagoRepository pagoRepository, PedidoRepository pedidoRepository,
+                PasarelaRegistry pasarelaRegistry, UsuarioRepository usuarios, TiendaProperties properties) {
+            return new PagoService(pagoRepository, pedidoRepository, pasarelaRegistry, usuarios, properties);
+        }
+
+        @Bean
+        FacturaRepository facturaRepository() {
+            return new FacturaRepository(null);
+        }
+
+        @Bean
+        FacturaService facturaService(FacturaRepository facturaRepository, PedidoRepository pedidoRepository,
+                TiendaProperties properties, com.codeconheiner.tienda.seguridad.Auditoria auditoria) {
+            return new FacturaService(facturaRepository, pedidoRepository, properties, auditoria);
+        }
+
+        @Bean
+        ReporteRepository reporteRepository() {
+            return new ReporteRepository(null);
+        }
+
+        @Bean
+        ReporteService reporteService(ReporteRepository reporteRepository,
+                InventarioRepository inventarioRepository) {
+            return new ReporteService(reporteRepository, inventarioRepository);
+        }
+
+        @Bean
+        FirmaWebhookRegistry firmaWebhookRegistry(TiendaProperties properties) {
+            return new FirmaWebhookRegistry(
+                    List.of(new WompiFirmaWebhook(properties), new EpaycoFirmaWebhook(properties)));
+        }
+
+        @Bean
+        WompiEventoParser wompiEventoParser(ObjectMapper objectMapper) {
+            return new WompiEventoParser(objectMapper);
+        }
+
+        @Bean
+        EpaycoEventoParser epaycoEventoParser(ObjectMapper objectMapper) {
+            return new EpaycoEventoParser(objectMapper);
+        }
+
+        @Bean
+        WebhookEventosRepository webhookEventosRepository() {
+            return new WebhookEventosRepository(null);
+        }
+
+        @Bean
+        WebhookPagoService webhookPagoService(WebhookEventosRepository eventos, PagoRepository pagos,
+                com.codeconheiner.tienda.seguridad.Auditoria auditoria) {
+            return new WebhookPagoService(eventos, pagos, auditoria);
         }
 
         @Bean
@@ -548,49 +648,80 @@ class ApiEndpointsTest {
         }
     }
 
-    static class InMemoryRefreshTokenRepository extends RefreshTokenRepository {
+    static class InMemoryRefreshTokenRepository implements com.codeconheiner.tienda.auth.RefreshTokenStore {
 
-        private final Map<String, RefreshTokenRepository.RefreshToken> tokens = new HashMap<>();
+        private final Map<String, com.codeconheiner.tienda.auth.RefreshTokenStore.Sesion> tokens = new HashMap<>();
         private long siguiente = 1;
 
         InMemoryRefreshTokenRepository() {
-            super((JdbcTemplate) null);
         }
 
         @Override
-        public Long crear(Long usuarioId, String tokenHash, java.time.OffsetDateTime expiraEn) {
+        public Long crearFamilia(Long usuarioId, String tokenHash, java.time.OffsetDateTime expiraEn) {
             long id = siguiente++;
-            tokens.put(tokenHash, new RefreshTokenRepository.RefreshToken(id, usuarioId, expiraEn, false));
+            tokens.put(tokenHash, new com.codeconheiner.tienda.auth.RefreshTokenStore.Sesion(id, usuarioId, id,
+                    expiraEn, false, false, null, null));
             return id;
         }
 
         @Override
-        public Optional<RefreshTokenRepository.RefreshToken> buscarPorHash(String tokenHash) {
+        public Long crearEnFamilia(Long usuarioId, Long sesionId, String tokenHash, java.time.OffsetDateTime expiraEn) {
+            long id = siguiente++;
+            tokens.put(tokenHash, new com.codeconheiner.tienda.auth.RefreshTokenStore.Sesion(id, usuarioId, sesionId,
+                    expiraEn, false, false, null, null));
+            return id;
+        }
+
+        @Override
+        public Optional<com.codeconheiner.tienda.auth.RefreshTokenStore.Sesion> buscarPorHash(String tokenHash) {
             return Optional.ofNullable(tokens.get(tokenHash));
         }
 
         @Override
-        public int revocar(String tokenHash) {
-            RefreshTokenRepository.RefreshToken token = tokens.get(tokenHash);
-            if (token == null || token.revocado()) {
+        public int marcarUsado(String tokenHash, Long reemplazadoPor) {
+            com.codeconheiner.tienda.auth.RefreshTokenStore.Sesion token = tokens.get(tokenHash);
+            if (token == null || token.revocado() || token.usado()) {
                 return 0;
             }
-            tokens.put(tokenHash, new RefreshTokenRepository.RefreshToken(token.id(), token.usuarioId(),
-                    token.expiraEn(), true));
+            tokens.put(tokenHash, new com.codeconheiner.tienda.auth.RefreshTokenStore.Sesion(token.id(),
+                    token.usuarioId(), token.sesionId(), token.expiraEn(), token.revocado(), true,
+                    java.time.OffsetDateTime.now(), token.revocadoEn()));
             return 1;
+        }
+
+        @Override
+        public int revocarFamilia(Long usuarioId, Long sesionId) {
+            int n = 0;
+            for (Map.Entry<String, com.codeconheiner.tienda.auth.RefreshTokenStore.Sesion> e : tokens.entrySet()) {
+                com.codeconheiner.tienda.auth.RefreshTokenStore.Sesion t = e.getValue();
+                if (t.usuarioId().equals(usuarioId) && t.sesionId().equals(sesionId) && !t.revocado()) {
+                    e.setValue(new com.codeconheiner.tienda.auth.RefreshTokenStore.Sesion(t.id(), t.usuarioId(),
+                            t.sesionId(), t.expiraEn(), true, t.usado(), t.usadoEn(),
+                            java.time.OffsetDateTime.now()));
+                    n++;
+                }
+            }
+            return n;
         }
 
         @Override
         public int revocarTodosDeUsuario(Long usuarioId) {
             int n = 0;
-            for (Map.Entry<String, RefreshTokenRepository.RefreshToken> e : tokens.entrySet()) {
-                RefreshTokenRepository.RefreshToken t = e.getValue();
+            for (Map.Entry<String, com.codeconheiner.tienda.auth.RefreshTokenStore.Sesion> e : tokens.entrySet()) {
+                com.codeconheiner.tienda.auth.RefreshTokenStore.Sesion t = e.getValue();
                 if (t.usuarioId().equals(usuarioId) && !t.revocado()) {
-                    e.setValue(new RefreshTokenRepository.RefreshToken(t.id(), t.usuarioId(), t.expiraEn(), true));
+                    e.setValue(new com.codeconheiner.tienda.auth.RefreshTokenStore.Sesion(t.id(), t.usuarioId(),
+                            t.sesionId(), t.expiraEn(), true, t.usado(), t.usadoEn(),
+                            java.time.OffsetDateTime.now()));
                     n++;
                 }
             }
             return n;
+        }
+
+        @Override
+        public int purgarAntiguos(int diasRetencion) {
+            return 0;
         }
     }
 

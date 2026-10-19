@@ -42,6 +42,13 @@ public class DireccionRepository {
     }
 
     public Long crear(Long usuarioId, DireccionRequest r) {
+        boolean principal = Boolean.TRUE.equals(r.esPrincipal());
+        if (principal) {
+            // El índice único parcial ux_direcciones_principal (V6) exige que no
+            // quede otra principal antes de insertar; el trigger de V3 es la red
+            // de seguridad para escrituras que no pasen por aquí.
+            desmarcarPrincipales(usuarioId, null);
+        }
         return jdbc.queryForObject("""
                 INSERT INTO direcciones (usuario_id, alias, destinatario, telefono, departamento, ciudad,
                                          direccion, indicaciones, es_principal)
@@ -49,19 +56,35 @@ public class DireccionRepository {
                 RETURNING id
                 """, Long.class, usuarioId, r.alias(), r.destinatario().trim(), r.telefono().trim(),
                 r.departamento().trim(), r.ciudad().trim(), r.direccion().trim(), r.indicaciones(),
-                Boolean.TRUE.equals(r.esPrincipal()));
+                principal);
     }
 
     /** @return filas afectadas (0 si la direccion no pertenece al usuario) */
     public int actualizar(Long id, Long usuarioId, DireccionRequest r) {
+        boolean principal = Boolean.TRUE.equals(r.esPrincipal());
+        if (principal) {
+            desmarcarPrincipales(usuarioId, id);
+        }
         return jdbc.update("""
                 UPDATE direcciones
                 SET alias = ?, destinatario = ?, telefono = ?, departamento = ?, ciudad = ?, direccion = ?,
                     indicaciones = ?, es_principal = ?
                 WHERE id = ? AND usuario_id = ?
                 """, r.alias(), r.destinatario().trim(), r.telefono().trim(), r.departamento().trim(),
-                r.ciudad().trim(), r.direccion().trim(), r.indicaciones(), Boolean.TRUE.equals(r.esPrincipal()),
+                r.ciudad().trim(), r.direccion().trim(), r.indicaciones(), principal,
                 id, usuarioId);
+    }
+
+    private void desmarcarPrincipales(Long usuarioId, Long exceptoId) {
+        if (exceptoId == null) {
+            jdbc.update("UPDATE direcciones SET es_principal = FALSE WHERE usuario_id = ? AND es_principal",
+                    usuarioId);
+        } else {
+            jdbc.update("""
+                    UPDATE direcciones SET es_principal = FALSE
+                    WHERE usuario_id = ? AND es_principal AND id <> ?
+                    """, usuarioId, exceptoId);
+        }
     }
 
     public int eliminar(Long id, Long usuarioId) {

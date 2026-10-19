@@ -1,6 +1,7 @@
 package com.codeconheiner.tienda.auth;
 
 import com.codeconheiner.tienda.config.TiendaProperties;
+import com.codeconheiner.tienda.config.ValidacionConfiguracion;
 import com.codeconheiner.tienda.usuarios.Usuario;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
@@ -19,6 +20,7 @@ public class JwtService {
     private final long expiracionMinutos;
 
     public JwtService(TiendaProperties props) {
+        ValidacionConfiguracion.validarSecretoJwt(props.jwt().secret());
         this.key = Keys.hmacShaKeyFor(props.jwt().secret().getBytes(StandardCharsets.UTF_8));
         this.expiracionMinutos = props.jwt().expiracionMinutos();
     }

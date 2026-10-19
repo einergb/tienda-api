@@ -41,6 +41,12 @@ class FlujoCompletoPostgresTest {
         registry.add("tienda.jwt.secret", () -> "flujo-completo-tests-jwt-secret-at-least-32-bytes");
         registry.add("tienda.admin.email", () -> "admin@tienda.local");
         registry.add("tienda.admin.password", () -> "");
+        // los webhooks de prueba firman con este secreto (SHA-256(payload + secreto))
+        registry.add("tienda.pagos.wompi.integrity-secret", () -> "e2e-wompi-secreto");
+        registry.add("tienda.pagos.epayco.private-key", () -> "e2e-epayco-llave");
+        // holgura para que el rate limit por IP no interrumpa la secuencia del E2E
+        registry.add("tienda.rate-limit.peticiones-por-minuto", () -> "5000");
+        registry.add("tienda.rate-limit.peticiones-auth-por-minuto", () -> "500");
     }
 
     @Autowired
@@ -120,11 +126,12 @@ class FlujoCompletoPostgresTest {
         String refreshTokenRotado = refresco.path("refreshToken").asText();
 
         mvc.perform(post("/api/auth/logout").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"refreshToken\":\"" + refreshToken + "\"}"))
+                        .content("{\"refreshToken\":\"" + refreshTokenRotado + "\"}"))
                 .andExpect(status().isNoContent());
+        // El logout revoca la familia completa: el token rotado deja de servir.
         mvc.perform(post("/api/auth/refresh").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"" + refreshTokenRotado + "\"}"))
-                .andExpect(status().isOk()); // el rotado sigue vigente
+                .andExpect(status().isUnauthorized());
 
         // ---------- producto (admin) ----------
         JsonNode producto = json(mvc.perform(post("/api/admin/productos")
@@ -270,6 +277,165 @@ class FlujoCompletoPostgresTest {
         assertThat(enUmbral).isTrue();
 
         assertThat(adminId).isPositive();
+    }
+
+    /**
+     * Pasarela, webhooks y facturas de punta a punta: sesión de checkout simulada con
+     * idempotencia saliente, webhook firmado que marca el pedido como PAGADO (trigger de
+     * V3), deduplicación de notificaciones y emisión idempotente de la factura.
+     */
+    @Test
+    void pasarelaWebhookYFacturaFuncionanContraPostgres() throws Exception {
+        jdbc.queryForObject("""
+                INSERT INTO usuarios (nombre, email, password_hash, rol_id)
+                VALUES ('Admin Integracion', ?, ?, (SELECT id FROM roles WHERE nombre = 'ADMIN'))
+                RETURNING id
+                """, Long.class, emailAdmin, encoder.encode("admin-clave-segura"));
+        String adminToken = token(emailAdmin, "admin-clave-segura");
+
+        JsonNode registro = json(mvc.perform(post("/api/auth/registro")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"nombre":"Cliente","email":"%s","password":"clave-segura-1"}
+                                """.formatted(emailCliente)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString());
+        String clienteToken = registro.path("token").asText();
+
+        JsonNode producto = json(mvc.perform(post("/api/admin/productos")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sku":"%s","nombre":"Producto IT %s","precio":1000,"categoriaId":1,
+                                 "stock":10,"stockMinimo":8}
+                                """.formatted(sku, sufijo)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString());
+        long productoId = producto.path("id").asLong();
+
+        mvc.perform(post("/api/carrito/items").header("Authorization", "Bearer " + clienteToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"productoId\":" + productoId + ",\"cantidad\":2}"))
+                .andExpect(status().isCreated());
+        JsonNode direccion = json(mvc.perform(post("/api/direcciones")
+                        .header("Authorization", "Bearer " + clienteToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"destinatario":"Cliente Uno","telefono":"3001112222","departamento":"Bogota",
+                                 "ciudad":"Bogota","direccion":"Carrera 7 #1-2","esPrincipal":true}
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString());
+        JsonNode pedido = json(mvc.perform(post("/api/pedidos")
+                        .header("Authorization", "Bearer " + clienteToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"direccionId\":" + direccion.path("id").asLong() + "}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString());
+        long pedidoId = pedido.path("id").asLong();
+        String numeroPedido = pedido.path("numero").asText();
+
+        // ---------- sesión en la pasarela (modo simulado) con idempotencia saliente ----------
+        String clave = UUID.randomUUID().toString();
+        String cuerpoSesion = """
+                {"pedidoId":%d,"pasarela":"WOMPI","claveIdempotencia":"%s"}
+                """.formatted(pedidoId, clave);
+
+        JsonNode sesion = json(mvc.perform(post("/api/pagos/sesion")
+                        .header("Authorization", "Bearer " + clienteToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(cuerpoSesion))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.pasarela").value("WOMPI"))
+                .andReturn().getResponse().getContentAsString());
+        String referencia = sesion.path("referencia").asText();
+        assertThat(referencia).startsWith(numeroPedido + "-");
+        assertThat(sesion.path("sesionId").asText()).isEqualTo("SIM-" + referencia);
+
+        // el reintento con la misma clave reutiliza el intento (no duplica el cobro)
+        JsonNode reintento = json(mvc.perform(post("/api/pagos/sesion")
+                        .header("Authorization", "Bearer " + clienteToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(cuerpoSesion))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString());
+        assertThat(reintento.path("pagoId").asLong()).isEqualTo(sesion.path("pagoId").asLong());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM pagos WHERE pedido_id = ?",
+                Long.class, pedidoId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT idempotency_key FROM pagos WHERE pedido_id = ?",
+                String.class, pedidoId)).isEqualTo(clave);
+        assertThat(jdbc.queryForObject("SELECT sesion_id FROM pagos WHERE pedido_id = ?",
+                String.class, pedidoId)).isEqualTo("SIM-" + referencia);
+
+        // ---------- webhook de Wompi firmado: marca el pedido como PAGADO ----------
+        String cuerpoWebhook = """
+                {"event":"transaction.updated","data":{"id":"tx-e2e-%s","status":"APPROVED",
+                 "reference":"%s","amount_in_cents":1238000}}
+                """.formatted(sufijo, referencia);
+        String checksum = com.codeconheiner.tienda.common.Hashes.sha256Hex(cuerpoWebhook + "e2e-wompi-secreto");
+
+        mvc.perform(post("/api/webhooks/wompi")
+                        .header("X-Event-Checksum", checksum)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(cuerpoWebhook))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.estado").value("procesado"));
+
+        assertThat(jdbc.queryForObject("SELECT estado FROM pedidos WHERE id = ?",
+                String.class, pedidoId)).isEqualTo("PAGADO");
+        assertThat(jdbc.queryForObject("SELECT stock FROM inventario WHERE producto_id = ?",
+                Integer.class, productoId)).isEqualTo(8);
+        assertThat(jdbc.queryForObject("SELECT stock_reservado FROM inventario WHERE producto_id = ?",
+                Integer.class, productoId)).isZero();
+
+        // la misma notificación reenviada se ignora
+        mvc.perform(post("/api/webhooks/wompi")
+                        .header("X-Event-Checksum", checksum)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(cuerpoWebhook))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.estado").value("duplicado"));
+
+        // una firma inválida no toca nada
+        mvc.perform(post("/api/webhooks/wompi")
+                        .header("X-Event-Checksum", "firma-falsa")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(cuerpoWebhook))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.detail").value("Firma del webhook inválida"));
+
+        // ---------- factura idempotente ----------
+        JsonNode factura = json(mvc.perform(get("/api/pedidos/" + pedidoId + "/factura")
+                        .header("Authorization", "Bearer " + clienteToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        String numeroFactura = factura.path("numero").asText();
+        assertThat(numeroFactura).matches("FAC-\\d{4}-\\d{6}");
+        assertThat(factura.path("total").decimalValue()).isEqualByComparingTo("12380");
+
+        JsonNode facturaRepetida = json(mvc.perform(get("/api/pedidos/" + pedidoId + "/factura")
+                        .header("Authorization", "Bearer " + clienteToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        assertThat(facturaRepetida.path("numero").asText()).isEqualTo(numeroFactura);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM facturas WHERE pedido_id = ?",
+                Long.class, pedidoId)).isEqualTo(1);
+
+        // ---------- reportes del admin ----------
+        mvc.perform(get("/api/admin/reportes/ventas")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("desde", java.time.OffsetDateTime.now().minusDays(1).toString())
+                        .param("hasta", java.time.OffsetDateTime.now().plusDays(1).toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pedidos").value(1))
+                .andExpect(jsonPath("$.pedidosPagados").value(1))
+                .andExpect(jsonPath("$.porEstado.PAGADO").value(1));
+
+        mvc.perform(get("/api/admin/reportes/inventario")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.unidades").value(8))
+                .andExpect(jsonPath("$.bajoUmbral").isArray());
     }
 
     private String token(String email, String password) throws Exception {

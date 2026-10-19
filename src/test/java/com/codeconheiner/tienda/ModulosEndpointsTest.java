@@ -1,5 +1,6 @@
 package com.codeconheiner.tienda;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -13,6 +14,7 @@ import com.codeconheiner.tienda.carrito.CarritoRepository;
 import com.codeconheiner.tienda.carrito.CarritoService;
 import com.codeconheiner.tienda.carrito.dto.CarritoItemResponse;
 import com.codeconheiner.tienda.common.GlobalExceptionHandler;
+import com.codeconheiner.tienda.common.Hashes;
 import com.codeconheiner.tienda.config.SecurityConfig;
 import com.codeconheiner.tienda.config.TiendaProperties;
 import com.codeconheiner.tienda.cupones.AdminCuponController;
@@ -31,20 +33,40 @@ import com.codeconheiner.tienda.envios.EnvioController;
 import com.codeconheiner.tienda.envios.EnvioRepository;
 import com.codeconheiner.tienda.envios.EnvioService;
 import com.codeconheiner.tienda.envios.dto.EnvioResponse;
+import com.codeconheiner.tienda.facturas.EnvioCopia;
+import com.codeconheiner.tienda.facturas.FacturaEmision;
+import com.codeconheiner.tienda.facturas.FacturaRepository;
+import com.codeconheiner.tienda.facturas.FacturaService;
 import com.codeconheiner.tienda.inventario.InventarioController;
 import com.codeconheiner.tienda.inventario.InventarioRepository;
 import com.codeconheiner.tienda.inventario.InventarioService;
+import com.codeconheiner.tienda.inventario.dto.StockBajoResponse;
 import com.codeconheiner.tienda.inventario.dto.StockInfoResponse;
 import com.codeconheiner.tienda.pagos.PagoController;
+import com.codeconheiner.tienda.pagos.PagoDetalle;
 import com.codeconheiner.tienda.pagos.PagoRepository;
 import com.codeconheiner.tienda.pagos.PagoService;
+import com.codeconheiner.tienda.pagos.dto.PagoConPasarelaRequest;
 import com.codeconheiner.tienda.pagos.dto.PagoResponse;
+import com.codeconheiner.tienda.pagos.dto.SesionPagoResponse;
+import com.codeconheiner.tienda.pagos.pasarela.EpaycoFirmaWebhook;
+import com.codeconheiner.tienda.pagos.pasarela.EpaycoPasarela;
+import com.codeconheiner.tienda.pagos.pasarela.FirmaWebhookRegistry;
+import com.codeconheiner.tienda.pagos.pasarela.PasarelaRegistry;
+import com.codeconheiner.tienda.pagos.pasarela.WompiFirmaWebhook;
+import com.codeconheiner.tienda.pagos.pasarela.WompiPasarela;
 import com.codeconheiner.tienda.pedidos.AdminPedidoController;
+import com.codeconheiner.tienda.pedidos.CalculadoraTotales;
 import com.codeconheiner.tienda.pedidos.PedidoController;
 import com.codeconheiner.tienda.pedidos.PedidoRepository;
 import com.codeconheiner.tienda.pedidos.PedidoService;
 import com.codeconheiner.tienda.pedidos.dto.PedidoItemResponse;
 import com.codeconheiner.tienda.pedidos.dto.PedidoResponse;
+import com.codeconheiner.tienda.reportes.ReporteController;
+import com.codeconheiner.tienda.reportes.ReporteRepository;
+import com.codeconheiner.tienda.reportes.ReporteService;
+import com.codeconheiner.tienda.reportes.dto.InventarioReporteResponse;
+import com.codeconheiner.tienda.reportes.dto.ResumenVentasResponse;
 import com.codeconheiner.tienda.resenas.ResenaController;
 import com.codeconheiner.tienda.resenas.ResenaRepository;
 import com.codeconheiner.tienda.resenas.ResenaService;
@@ -53,13 +75,24 @@ import com.codeconheiner.tienda.resenas.dto.ResenaResponse;
 import com.codeconheiner.tienda.usuarios.Usuario;
 import com.codeconheiner.tienda.usuarios.UsuarioRepository;
 import com.codeconheiner.tienda.usuarios.UsuarioService;
+import com.codeconheiner.tienda.webhooks.EpaycoEventoParser;
+import com.codeconheiner.tienda.webhooks.EventoWebhookParser;
+import com.codeconheiner.tienda.webhooks.WebhookController;
+import com.codeconheiner.tienda.webhooks.WebhookEvento;
+import com.codeconheiner.tienda.webhooks.WebhookEventosRepository;
+import com.codeconheiner.tienda.webhooks.WebhookPagoService;
+import com.codeconheiner.tienda.webhooks.WompiEventoParser;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -75,7 +108,8 @@ import org.springframework.test.web.servlet.MockMvc;
         CarritoController.class, InventarioController.class, PedidoController.class,
         PagoController.class, EnvioController.class, DireccionController.class,
         CuponController.class, ResenaController.class, AdminPedidoController.class,
-        AdminEnvioController.class, AdminCuponController.class})
+        AdminEnvioController.class, AdminCuponController.class, ReporteController.class,
+        WebhookController.class})
 @Import({SecurityConfig.class, GlobalExceptionHandler.class, ModulosEndpointsTest.TestBeans.class})
 class ModulosEndpointsTest {
 
@@ -105,6 +139,15 @@ class ModulosEndpointsTest {
 
     @Autowired
     private FakeResenaRepository resenas;
+
+    @Autowired
+    private FakeFacturaRepository facturas;
+
+    @Autowired
+    private FakeReporteRepository reportes;
+
+    @Autowired
+    private FakeWebhookEventosRepository webhooks;
 
     // ---------- Carrito ----------
 
@@ -542,6 +585,264 @@ class ModulosEndpointsTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    // ---------- Pasarelas de pago (idempotencia saliente) ----------
+
+    @Test
+    @WithMockUser(username = "ana@example.com")
+    void crearSesionEnPasarelaDevuelveSesionSimuladaYClaveDeIdempotencia() throws Exception {
+        pedidos.limpiar();
+        pedidos.agregar(1L, pedido(1L, "PED-1", "PENDIENTE"));
+        pagos.limpiar();
+
+        mvc.perform(post("/api/pagos/sesion").contentType("application/json")
+                        .content("{\"pedidoId\":1,\"pasarela\":\"WOMPI\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.pasarela").value("WOMPI"))
+                .andExpect(jsonPath("$.referencia").value(org.hamcrest.Matchers.startsWith("PED-1-")))
+                .andExpect(jsonPath("$.sesionId").value(org.hamcrest.Matchers.startsWith("SIM-")))
+                .andExpect(jsonPath("$.claveIdempotencia").isNotEmpty());
+    }
+
+    @Test
+    @WithMockUser(username = "ana@example.com")
+    void reintentarConLaMismaClaveDevuelveElMismoIntento() throws Exception {
+        pedidos.limpiar();
+        pedidos.agregar(1L, pedido(1L, "PED-1", "PENDIENTE"));
+        pagos.limpiar();
+
+        String clave = "11111111-2222-3333-4444-555555555555";
+        String cuerpo = "{\"pedidoId\":1,\"pasarela\":\"WOMPI\",\"claveIdempotencia\":\"" + clave + "\"}";
+
+        mvc.perform(post("/api/pagos/sesion").contentType("application/json").content(cuerpo))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.claveIdempotencia").value(clave))
+                .andExpect(jsonPath("$.pagoId").value(1));
+
+        mvc.perform(post("/api/pagos/sesion").contentType("application/json").content(cuerpo))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.pagoId").value(1))
+                .andExpect(jsonPath("$.sesionId").value("SIM-PED-1-11111111"));
+
+        assertThat(pagos.total()).isEqualTo(1);
+    }
+
+    @Test
+    @WithMockUser(username = "ana@example.com")
+    void crearSesionConPasarelaDesconocidaDevuelve400() throws Exception {
+        pedidos.limpiar();
+        pedidos.agregar(1L, pedido(1L, "PED-1", "PENDIENTE"));
+
+        mvc.perform(post("/api/pagos/sesion").contentType("application/json")
+                        .content("{\"pedidoId\":1,\"pasarela\":\"PAYU\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("Pasarela no soportada"));
+    }
+
+    @Test
+    @WithMockUser(username = "ana@example.com")
+    void crearSesionDePedidoYaPagadoDevuelve409() throws Exception {
+        pedidos.limpiar();
+        pedidos.agregar(1L, pedido(1L, "PED-1", "PAGADO"));
+
+        mvc.perform(post("/api/pagos/sesion").contentType("application/json")
+                        .content("{\"pedidoId\":1,\"pasarela\":\"WOMPI\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("El pedido no admite pagos en el estado actual"));
+    }
+
+    // ---------- Webhooks de pasarela ----------
+
+    @Test
+    void webhookConFirmaInvalidaDevuelve401() throws Exception {
+        mvc.perform(post("/api/webhooks/wompi").contentType("application/json")
+                        .header("X-Event-Checksum", "firma-falsa")
+                        .content("{\"event\":\"transaction.updated\",\"data\":{}}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.detail").value("Firma del webhook inválida"));
+    }
+
+    @Test
+    void webhookAprobadoDeWompiMarcaElPedidoComoPagado() throws Exception {
+        pedidos.limpiar();
+        pagos.limpiar();
+        webhooks.limpiar();
+        pedidos.agregar(1L, pedido(1L, "PED-1", "PENDIENTE"));
+        pagos.crear(1L, "WOMPI", "PED-1-abc12345", "PENDIENTE", new BigDecimal("2380"), "clave-webhook");
+
+        String cuerpo = "{\"event\":\"transaction.updated\",\"data\":{\"id\":\"tx-1\","
+                + "\"status\":\"APPROVED\",\"reference\":\"PED-1-abc12345\","
+                + "\"amount_in_cents\":238000}}";
+
+        mvc.perform(post("/api/webhooks/wompi").contentType("application/json")
+                        .header("X-Event-Checksum", Hashes.sha256Hex(cuerpo + "wompi-test-secreto"))
+                        .content(cuerpo))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.estado").value("procesado"));
+
+        assertThat(pagos.buscarPorReferencia("PED-1-abc12345").orElseThrow().estado())
+                .isEqualTo("APROBADO");
+        assertThat(pedidos.obtenerPorId(1L, 1L).orElseThrow().estado()).isEqualTo("PAGADO");
+    }
+
+    @Test
+    void webhookDuplicadoSeIgnoraYNoReprocesa() throws Exception {
+        pedidos.limpiar();
+        pagos.limpiar();
+        webhooks.limpiar();
+        pedidos.agregar(1L, pedido(1L, "PED-1", "PENDIENTE"));
+        pagos.crear(1L, "WOMPI", "PED-1-abc12345", "PENDIENTE", new BigDecimal("2380"), "clave-webhook");
+
+        String cuerpo = "{\"event\":\"transaction.updated\",\"data\":{\"id\":\"tx-1\","
+                + "\"status\":\"APPROVED\",\"reference\":\"PED-1-abc12345\","
+                + "\"amount_in_cents\":238000}}";
+        String firma = Hashes.sha256Hex(cuerpo + "wompi-test-secreto");
+
+        mvc.perform(post("/api/webhooks/wompi").contentType("application/json")
+                        .header("X-Event-Checksum", firma).content(cuerpo))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.estado").value("procesado"));
+
+        mvc.perform(post("/api/webhooks/wompi").contentType("application/json")
+                        .header("X-Event-Checksum", firma).content(cuerpo))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.estado").value("duplicado"));
+    }
+
+    @Test
+    void webhookRechazadoDejaElPedidoPendiente() throws Exception {
+        pedidos.limpiar();
+        pagos.limpiar();
+        webhooks.limpiar();
+        pedidos.agregar(1L, pedido(1L, "PED-1", "PENDIENTE"));
+        pagos.crear(1L, "WOMPI", "PED-1-abc12345", "PENDIENTE", new BigDecimal("2380"), "clave-webhook");
+
+        String cuerpo = "{\"event\":\"transaction.updated\",\"data\":{\"id\":\"tx-2\","
+                + "\"status\":\"DECLINED\",\"reference\":\"PED-1-abc12345\","
+                + "\"amount_in_cents\":238000}}";
+
+        mvc.perform(post("/api/webhooks/wompi").contentType("application/json")
+                        .header("X-Event-Checksum", Hashes.sha256Hex(cuerpo + "wompi-test-secreto"))
+                        .content(cuerpo))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.estado").value("procesado"));
+
+        assertThat(pagos.buscarPorReferencia("PED-1-abc12345").orElseThrow().estado())
+                .isEqualTo("RECHAZADO");
+        assertThat(pedidos.obtenerPorId(1L, 1L).orElseThrow().estado()).isEqualTo("PENDIENTE");
+    }
+
+    @Test
+    void webhookDeEpaycoConFirmaValidaProcesaElPago() throws Exception {
+        pedidos.limpiar();
+        pagos.limpiar();
+        webhooks.limpiar();
+        pedidos.agregar(1L, pedido(1L, "PED-1", "PENDIENTE"));
+        pagos.crear(1L, "EPAYCO", "PED-1-abc12345", "PENDIENTE", new BigDecimal("2380"), "clave-webhook");
+
+        String cuerpo = "{\"type\":\"charge\",\"data\":{\"x_transaction_id\":\"tx-9\","
+                + "\"x_invoice\":\"PED-1-abc12345\",\"x_cod_response\":\"1\","
+                + "\"x_amount\":\"2380.00\"}}";
+
+        mvc.perform(post("/api/webhooks/epayco").contentType("application/json")
+                        .header("x-signature", Hashes.sha256Hex(cuerpo + "epayco-test-llave"))
+                        .content(cuerpo))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.estado").value("procesado"));
+
+        assertThat(pedidos.obtenerPorId(1L, 1L).orElseThrow().estado()).isEqualTo("PAGADO");
+    }
+
+    // ---------- Facturas ----------
+
+    @Test
+    @WithMockUser(username = "ana@example.com")
+    void facturaDePedidoPagadoSeEmiteYEsIdempotente() throws Exception {
+        pedidos.limpiar();
+        facturas.limpiar();
+        pedidos.agregar(1L, pedido(1L, "PED-1", "PAGADO"));
+        facturas.agregarEnvio(1L, "Ana", "Antioquia", "Medellin", "Calle 1 # 2-3");
+
+        mvc.perform(get("/api/pedidos/1/factura"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.numero").value("FAC-2026-000001"))
+                .andExpect(jsonPath("$.tienda").value("Tienda de prueba"))
+                .andExpect(jsonPath("$.numeroPedido").value("PED-1"))
+                .andExpect(jsonPath("$.destinatario").value("Ana"))
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.total").value(2380));
+
+        mvc.perform(get("/api/pedidos/1/factura"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.numero").value("FAC-2026-000001"));
+
+        assertThat(facturas.total()).isEqualTo(1);
+    }
+
+    @Test
+    @WithMockUser(username = "ana@example.com")
+    void facturaDePedidoNoPagadoDevuelve409() throws Exception {
+        pedidos.limpiar();
+        pedidos.agregar(1L, pedido(1L, "PED-1", "PENDIENTE"));
+
+        mvc.perform(get("/api/pedidos/1/factura"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("La factura solo se emite para pedidos pagados"));
+    }
+
+    @Test
+    @WithMockUser(username = "admin@example.com", roles = "ADMIN")
+    void adminEmiteFacturaDeCualquierPedido() throws Exception {
+        pedidos.limpiar();
+        facturas.limpiar();
+        pedidos.agregar(5L, pedido(3L, "PED-3", "ENTREGADO"));
+
+        mvc.perform(get("/api/admin/pedidos/3/factura"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.numero").value("FAC-2026-000001"))
+                .andExpect(jsonPath("$.numeroPedido").value("PED-3"));
+    }
+
+    // ---------- Reportes ----------
+
+    @Test
+    @WithMockUser(username = "admin@example.com", roles = "ADMIN")
+    void reporteDeVentasDevuelveResumen() throws Exception {
+        mvc.perform(get("/api/admin/reportes/ventas"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pedidos").value(4))
+                .andExpect(jsonPath("$.pedidosPagados").value(3))
+                .andExpect(jsonPath("$.porEstado.PAGADO").value(3))
+                .andExpect(jsonPath("$.topProductos.length()").value(1))
+                .andExpect(jsonPath("$.ventasPorDia[0].dia").value("2026-01-01"));
+    }
+
+    @Test
+    @WithMockUser(username = "admin@example.com", roles = "ADMIN")
+    void reporteDeVentasConRangoInvalidoDevuelve400() throws Exception {
+        mvc.perform(get("/api/admin/reportes/ventas")
+                        .param("desde", "2026-02-01T00:00:00Z")
+                        .param("hasta", "2026-01-01T00:00:00Z"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("El rango de fechas no es válido"));
+    }
+
+    @Test
+    @WithMockUser(username = "admin@example.com", roles = "ADMIN")
+    void reporteDeInventarioDevuelveTotales() throws Exception {
+        mvc.perform(get("/api/admin/reportes/inventario"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.productos").value(3))
+                .andExpect(jsonPath("$.valorInventario").value(500000))
+                .andExpect(jsonPath("$.bajoUmbral.length()").value(1))
+                .andExpect(jsonPath("$.bajoUmbral[0].sku").value("SKU-1"));
+    }
+
+    @Test
+    @WithMockUser(username = "ana@example.com")
+    void reportesRequierenRolAdmin() throws Exception {
+        mvc.perform(get("/api/admin/reportes/ventas")).andExpect(status().isForbidden());
+    }
+
     // ---------- Helpers / Beans ----------
 
     private static PedidoResponse pedido(long id, String numero, String estado) {
@@ -567,7 +868,26 @@ class ModulosEndpointsTest {
                     "Tienda de prueba", "COP", new BigDecimal("0.19"), new BigDecimal("200000"), 10000, 5, 15,
                     new TiendaProperties.Jwt("endpoint-tests-secret-at-least-32-bytes", 120),
                     new TiendaProperties.Admin("admin@example.com", ""),
-                    new TiendaProperties.Cors(List.of("http://localhost:5173")));
+                    new TiendaProperties.Cors(List.of("http://localhost:5173")),
+                    new TiendaProperties.RateLimit(300, 10, 60),
+                    new TiendaProperties.Pagos("simulado",
+                            new TiendaProperties.Pagos.Wompi(null, null, null, "wompi-test-secreto", null),
+                            new TiendaProperties.Pagos.Epayco(null, null, null, "epayco-test-llave")));
+        }
+
+        @Bean
+        com.codeconheiner.tienda.seguridad.Auditoria auditoria() {
+            return new com.codeconheiner.tienda.seguridad.Auditoria(null, null) {
+                @Override
+                public void registrar(Long usuarioId, String accion, String entidad, String entidadId,
+                        java.util.Map<String, ?> detalle) {
+                }
+
+                @Override
+                public void registrarActual(String accion, String entidad, String entidadId,
+                        java.util.Map<String, ?> detalle) {
+                }
+            };
         }
 
         @Bean
@@ -641,9 +961,15 @@ class ModulosEndpointsTest {
         }
 
         @Bean
+        CalculadoraTotales calculadoraTotales(TiendaProperties props, CuponService cuponService) {
+            return new CalculadoraTotales(props, cuponService);
+        }
+
+        @Bean
         PedidoService pedidoService(PedidoRepository repo, CarritoRepository carritoRepository,
-                DireccionService direccionService, CuponService cuponService, TiendaProperties props) {
-            return new PedidoService(repo, carritoRepository, direccionService, cuponService, props);
+                DireccionService direccionService, CalculadoraTotales calculadoraTotales,
+                com.codeconheiner.tienda.seguridad.Auditoria auditoria) {
+            return new PedidoService(repo, carritoRepository, direccionService, calculadoraTotales, auditoria);
         }
 
         @Bean
@@ -652,8 +978,63 @@ class ModulosEndpointsTest {
         }
 
         @Bean
-        PagoService pagoService(PagoRepository repo, PedidoRepository pedidoRepository) {
-            return new PagoService(repo, pedidoRepository);
+        PasarelaRegistry pasarelaRegistry(TiendaProperties properties) {
+            return new PasarelaRegistry(
+                    List.of(new WompiPasarela(properties), new EpaycoPasarela(properties)));
+        }
+
+        @Bean
+        PagoService pagoService(PagoRepository repo, PedidoRepository pedidoRepository,
+                PasarelaRegistry pasarelaRegistry, UsuarioRepository usuarios, TiendaProperties properties) {
+            return new PagoService(repo, pedidoRepository, pasarelaRegistry, usuarios, properties);
+        }
+
+        @Bean
+        FakeFacturaRepository facturaRepository() {
+            return new FakeFacturaRepository();
+        }
+
+        @Bean
+        FacturaService facturaService(FacturaRepository repo, PedidoRepository pedidoRepository,
+                TiendaProperties properties, com.codeconheiner.tienda.seguridad.Auditoria auditoria) {
+            return new FacturaService(repo, pedidoRepository, properties, auditoria);
+        }
+
+        @Bean
+        FakeReporteRepository reporteRepository() {
+            return new FakeReporteRepository();
+        }
+
+        @Bean
+        ReporteService reporteService(ReporteRepository repo, InventarioRepository inventarioRepository) {
+            return new ReporteService(repo, inventarioRepository);
+        }
+
+        @Bean
+        FirmaWebhookRegistry firmaWebhookRegistry(TiendaProperties properties) {
+            return new FirmaWebhookRegistry(
+                    List.of(new WompiFirmaWebhook(properties), new EpaycoFirmaWebhook(properties)));
+        }
+
+        @Bean
+        EventoWebhookParser wompiEventoParser(ObjectMapper objectMapper) {
+            return new WompiEventoParser(objectMapper);
+        }
+
+        @Bean
+        EventoWebhookParser epaycoEventoParser(ObjectMapper objectMapper) {
+            return new EpaycoEventoParser(objectMapper);
+        }
+
+        @Bean
+        FakeWebhookEventosRepository webhookEventosRepository() {
+            return new FakeWebhookEventosRepository();
+        }
+
+        @Bean
+        WebhookPagoService webhookPagoService(WebhookEventosRepository eventos, PagoRepository pagos,
+                com.codeconheiner.tienda.seguridad.Auditoria auditoria) {
+            return new WebhookPagoService(eventos, pagos, auditoria);
         }
 
         @Bean
@@ -679,6 +1060,14 @@ class ModulosEndpointsTest {
                 return Optional.empty();
             }
             return Optional.of(new Usuario(1L, "Ana", email, "hash", "CLIENTE", true));
+        }
+
+        @Override
+        public Optional<Usuario> buscarPorId(Long id) {
+            if (id == null) {
+                return Optional.empty();
+            }
+            return Optional.of(new Usuario(id, "Ana", "ana@example.com", "hash", "CLIENTE", true));
         }
     }
 
@@ -771,6 +1160,11 @@ class ModulosEndpointsTest {
         @Override
         public Optional<StockInfoResponse> obtenerStock(Long productoId) {
             return Optional.ofNullable(datos.get(productoId));
+        }
+
+        @Override
+        public List<StockBajoResponse> listarStockBajo() {
+            return List.of(new StockBajoResponse(1L, "SKU-1", "Producto", 1, 0, 5));
         }
     }
 
@@ -1014,7 +1408,10 @@ class ModulosEndpointsTest {
 
     static class FakePagoRepository extends PagoRepository {
 
-        private final List<PagoResponse> datos = new ArrayList<>();
+        private final Map<Long, PagoResponse> datos = new LinkedHashMap<>();
+        private final Map<Long, String> sesiones = new HashMap<>();
+        private final Map<String, Long> porClave = new HashMap<>();
+        private final Map<String, Long> porReferencia = new HashMap<>();
         private final FakePedidoRepository pedidos;
         private long siguiente = 1;
 
@@ -1025,29 +1422,181 @@ class ModulosEndpointsTest {
 
         void limpiar() {
             datos.clear();
+            sesiones.clear();
+            porClave.clear();
+            porReferencia.clear();
             siguiente = 1;
         }
 
         void agregar(PagoResponse pago) {
-            datos.add(pago);
+            datos.put(pago.id(), pago);
+            porReferencia.put(pago.referencia(), pago.id());
+            siguiente = Math.max(siguiente, pago.id() + 1);
+        }
+
+        int total() {
+            return datos.size();
         }
 
         @Override
         public List<PagoResponse> listarPorPedido(Long pedidoId) {
-            return datos.stream().filter(p -> p.pedidoId().equals(pedidoId)).toList();
+            return datos.values().stream().filter(p -> p.pedidoId().equals(pedidoId)).toList();
         }
 
         @Override
         public PagoResponse crear(Long pedidoId, String pasarela, String referencia, String estado,
                 BigDecimal monto) {
+            return crear(pedidoId, pasarela, referencia, estado, monto, null);
+        }
+
+        @Override
+        public PagoResponse crear(Long pedidoId, String pasarela, String referencia, String estado,
+                BigDecimal monto, String idempotencyKey) {
             PagoResponse pago = new PagoResponse(siguiente++, pedidoId, pasarela, referencia, estado, monto,
                     OffsetDateTime.now());
-            datos.add(pago);
+            datos.put(pago.id(), pago);
+            porReferencia.put(referencia, pago.id());
+            if (idempotencyKey != null) {
+                porClave.put(idempotencyKey, pago.id());
+            }
             // simula el trigger trg_pago_aprobado de V3
             if ("APROBADO".equals(estado)) {
                 pedidos.marcarPagado(pedidoId);
             }
             return pago;
+        }
+
+        @Override
+        public Optional<PagoDetalle> buscarPorIdempotencyKey(String clave) {
+            return Optional.ofNullable(porClave.get(clave)).map(this::detalle);
+        }
+
+        @Override
+        public Optional<PagoDetalle> buscarPorReferencia(String referencia) {
+            return Optional.ofNullable(porReferencia.get(referencia)).map(this::detalle);
+        }
+
+        @Override
+        public void guardarSesion(Long pagoId, String sesionId) {
+            sesiones.put(pagoId, sesionId);
+        }
+
+        @Override
+        public int actualizarEstado(Long pagoId, String estado) {
+            PagoResponse pago = datos.get(pagoId);
+            if (pago == null) {
+                return 0;
+            }
+            datos.put(pagoId, new PagoResponse(pago.id(), pago.pedidoId(), pago.pasarela(),
+                    pago.referencia(), estado, pago.monto(), pago.creadoEn()));
+            // simula el trigger trg_pago_aprobado de V3
+            if ("APROBADO".equals(estado)) {
+                pedidos.marcarPagado(pago.pedidoId());
+            }
+            return 1;
+        }
+
+        private PagoDetalle detalle(Long pagoId) {
+            PagoResponse p = datos.get(pagoId);
+            String clave = porClave.entrySet().stream()
+                    .filter(e -> e.getValue().equals(pagoId))
+                    .map(Map.Entry::getKey)
+                    .findFirst()
+                    .orElse(null);
+            return new PagoDetalle(p.id(), p.pedidoId(), p.pasarela(), p.referencia(), p.estado(),
+                    p.monto(), sesiones.get(pagoId), clave);
+        }
+    }
+
+    /** Facturas en memoria: la emisión es idempotente por pedido. */
+    static class FakeFacturaRepository extends FacturaRepository {
+
+        private final Map<Long, FacturaEmision> emitidas = new LinkedHashMap<>();
+        private final Map<Long, EnvioCopia> envios = new HashMap<>();
+        private long siguiente = 1;
+
+        FakeFacturaRepository() {
+            super((JdbcTemplate) null);
+        }
+
+        void limpiar() {
+            emitidas.clear();
+            envios.clear();
+            siguiente = 1;
+        }
+
+        void agregarEnvio(Long pedidoId, String destinatario, String departamento, String ciudad,
+                String direccion) {
+            envios.put(pedidoId, new EnvioCopia(destinatario, "3001234567", departamento, ciudad, direccion));
+        }
+
+        int total() {
+            return emitidas.size();
+        }
+
+        @Override
+        public Optional<FacturaEmision> buscarPorPedido(Long pedidoId) {
+            return Optional.ofNullable(emitidas.get(pedidoId));
+        }
+
+        @Override
+        public Optional<EnvioCopia> buscarEnvioPedido(Long pedidoId) {
+            return Optional.ofNullable(envios.get(pedidoId));
+        }
+
+        @Override
+        public FacturaEmision emitir(Long pedidoId, BigDecimal total) {
+            FacturaEmision existente = emitidas.get(pedidoId);
+            if (existente != null) {
+                return existente;
+            }
+            FacturaEmision nueva = new FacturaEmision(siguiente,
+                    "FAC-2026-" + String.format("%06d", siguiente), total, OffsetDateTime.now());
+            siguiente++;
+            emitidas.put(pedidoId, nueva);
+            return nueva;
+        }
+    }
+
+    /** Reportes con datos fijos para verificar el contrato HTTP. */
+    static class FakeReporteRepository extends ReporteRepository {
+
+        FakeReporteRepository() {
+            super((JdbcTemplate) null);
+        }
+
+        @Override
+        public ResumenVentasResponse resumen(OffsetDateTime desde, OffsetDateTime hasta) {
+            return new ResumenVentasResponse(desde, hasta, 4, 3, new BigDecimal("48000"),
+                    new BigDecimal("12000"), Map.of("PAGADO", 3, "PENDIENTE", 1),
+                    List.of(new ResumenVentasResponse.TopProducto(1L, "Producto", 5,
+                            new BigDecimal("30000"))),
+                    List.of(new ResumenVentasResponse.VentaDiaria("2026-01-01", 4,
+                            new BigDecimal("48000"))));
+        }
+
+        @Override
+        public TotalesInventario totalesInventario() {
+            return new TotalesInventario(3, 10, new BigDecimal("500000"));
+        }
+    }
+
+    /** Deduplicación de webhooks en memoria: el evento solo se registra la primera vez. */
+    static class FakeWebhookEventosRepository extends WebhookEventosRepository {
+
+        private final Set<String> eventos = new HashSet<>();
+
+        FakeWebhookEventosRepository() {
+            super((JdbcTemplate) null);
+        }
+
+        void limpiar() {
+            eventos.clear();
+        }
+
+        @Override
+        public boolean registrarSiNuevo(String pasarela, String eventoId) {
+            return eventos.add(pasarela + ":" + eventoId);
         }
     }
 

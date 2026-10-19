@@ -36,11 +36,31 @@ tienda:
   stock-minimo-alerta: 5
   reserva-stock-minutos: 15
   jwt:
-    secret: ${JWT_SECRET}
+    # Sin secreto (o con uno corto) la app no arranca: ver ValidacionConfiguracion.
+    secret: ${JWT_SECRET:}
     expiracion-minutos: 120
   admin:
     email: ${ADMIN_EMAIL:admin@tienda.local}
     password: ${ADMIN_PASSWORD:}
   cors:
     origenes-permitidos: ${CORS_ORIGINS:http://localhost:5173}
+  rate-limit:
+    peticiones-por-minuto: ${RATE_LIMIT_MAXIMO:300}
+    peticiones-auth-por-minuto: ${RATE_LIMIT_AUTH_MAXIMO:10}
+    ventana-segundos: 60
+  pagos:
+    # simulado: no llama APIs externas. real: usa wompi/epayco contra sus sandboxes.
+    modo: ${PAGOS_MODO:simulado}
+    wompi:
+      api-url: ${WOMPI_API_URL:https://api.sandbox.wompi.co/v1}
+      public-key: ${WOMPI_PUBLIC_KEY:}
+      private-key: ${WOMPI_PRIVATE_KEY:}
+      # SHA-256(payload + integrity-secret) = cabecera X-Event-Checksum de los webhooks
+      integrity-secret: ${WOMPI_INTEGRITY_SECRET:}
+      redirect-url: ${WOMPI_REDIRECT_URL:http://localhost:5173/pago/exitoso}
+    epayco:
+      api-url: ${EPAYCO_API_URL:https://api.secure.epayco.co}
+      apify-url: ${EPAYCO_APIIFY_URL:https://apify.epayco.co}
+      public-key: ${EPAYCO_PUBLIC_KEY:}
+      private-key: ${EPAYCO_PRIVATE_KEY:}
 

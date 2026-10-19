@@ -38,6 +38,18 @@ public class PagoController {
         return service.crear(obtenerUsuarioId(), request);
     }
 
+    /**
+     * Crea la transacción en la pasarela (Wompi/ePayco, real o simulada) y devuelve los
+     * datos para que el frontend complete el pago en su entorno seguro. Si el cliente
+     * reintenta, debe enviar la misma {@code claveIdempotencia} para no duplicar el cobro.
+     */
+    @PostMapping("/sesion")
+    @ResponseStatus(HttpStatus.CREATED)
+    public com.codeconheiner.tienda.pagos.dto.SesionPagoResponse crearSesion(
+            @Valid @RequestBody com.codeconheiner.tienda.pagos.dto.PagoConPasarelaRequest request) {
+        return service.crearConPasarela(obtenerUsuarioId(), request);
+    }
+
     private Long obtenerUsuarioId() {
         String email = SecurityContextHolder.getContext().getAuthentication().getName();
         Long id = usuarioService.obtenerIdPorEmail(email);

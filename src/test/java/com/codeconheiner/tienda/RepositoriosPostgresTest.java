@@ -7,7 +7,7 @@ import com.codeconheiner.tienda.auth.RefreshTokenRepository;
 import com.codeconheiner.tienda.carrito.CarritoRepository;
 import com.codeconheiner.tienda.carrito.dto.CarritoItemResponse;
 import com.codeconheiner.tienda.common.ApiException;
-import com.codeconheiner.tienda.config.TareaExpiracionReservas;
+import com.codeconheiner.tienda.config.TareasSeguridad;
 import com.codeconheiner.tienda.cupones.CuponService;
 import com.codeconheiner.tienda.cupones.dto.CuponRequest;
 import com.codeconheiner.tienda.cupones.dto.CuponResponse;
@@ -16,18 +16,26 @@ import com.codeconheiner.tienda.direcciones.dto.DireccionRequest;
 import com.codeconheiner.tienda.direcciones.dto.DireccionResponse;
 import com.codeconheiner.tienda.envios.EnvioRepository;
 import com.codeconheiner.tienda.envios.dto.EnvioResponse;
+import com.codeconheiner.tienda.facturas.EnvioCopia;
+import com.codeconheiner.tienda.facturas.FacturaEmision;
+import com.codeconheiner.tienda.facturas.FacturaRepository;
 import com.codeconheiner.tienda.inventario.InventarioRepository;
 import com.codeconheiner.tienda.inventario.dto.StockBajoResponse;
 import com.codeconheiner.tienda.inventario.dto.StockInfoResponse;
+import com.codeconheiner.tienda.pagos.PagoDetalle;
 import com.codeconheiner.tienda.pagos.PagoRepository;
 import com.codeconheiner.tienda.pagos.dto.PagoResponse;
 import com.codeconheiner.tienda.pedidos.PedidoRepository;
 import com.codeconheiner.tienda.pedidos.PedidoService;
 import com.codeconheiner.tienda.pedidos.dto.PedidoRequest;
 import com.codeconheiner.tienda.pedidos.dto.PedidoResponse;
+import com.codeconheiner.tienda.reportes.ReporteRepository;
+import com.codeconheiner.tienda.reportes.dto.ResumenVentasResponse;
 import com.codeconheiner.tienda.resenas.ResenaRepository;
 import com.codeconheiner.tienda.resenas.dto.ResenaRequest;
 import com.codeconheiner.tienda.resenas.dto.ResenaResponse;
+import com.codeconheiner.tienda.seguridad.Auditoria;
+import com.codeconheiner.tienda.webhooks.WebhookEventosRepository;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.SQLException;
@@ -89,6 +97,15 @@ class RepositoriosPostgresTest {
     private PagoRepository pagoRepo;
 
     @Autowired
+    private FacturaRepository facturaRepo;
+
+    @Autowired
+    private ReporteRepository reporteRepo;
+
+    @Autowired
+    private WebhookEventosRepository webhookEventosRepo;
+
+    @Autowired
     private EnvioRepository envioRepo;
 
     @Autowired
@@ -107,7 +124,10 @@ class RepositoriosPostgresTest {
     private RefreshTokenRepository refreshTokenRepo;
 
     @Autowired
-    private TareaExpiracionReservas tareaExpiracion;
+    private Auditoria auditoria;
+
+    @Autowired
+    private TareasSeguridad tareaExpiracion;
 
     private final List<Long> cuponesCreados = new ArrayList<>();
 
@@ -124,6 +144,8 @@ class RepositoriosPostgresTest {
                         jdbc.update("DELETE FROM pagos WHERE pedido_id = ?", pedidoId);
                         jdbc.update("DELETE FROM pedidos WHERE id = ?", pedidoId);
                 }
+                jdbc.update("DELETE FROM webhook_eventos WHERE evento_id LIKE 'IT-%'");
+                jdbc.update("DELETE FROM auditoria WHERE accion LIKE 'IT-%'");
                 for (Long carritoId : carritosCreados) {
                         jdbc.update("DELETE FROM carritos WHERE id = ?", carritoId);
                 }
@@ -155,6 +177,8 @@ class RepositoriosPostgresTest {
                 jdbc.update("DELETE FROM carritos WHERE usuario_id IN "
                         + "(SELECT id FROM usuarios WHERE email LIKE 'it-%@tienda.test')");
                 jdbc.update("DELETE FROM cupones WHERE codigo LIKE 'IT-%'");
+                jdbc.update("DELETE FROM webhook_eventos WHERE evento_id LIKE 'IT-%'");
+                jdbc.update("DELETE FROM auditoria WHERE accion LIKE 'IT-%'");
                 jdbc.update("DELETE FROM productos WHERE sku LIKE 'IT-%' AND nombre LIKE 'Producto IT %'");
                 jdbc.update("DELETE FROM usuarios WHERE email LIKE 'it-%@tienda.test'");
             }
@@ -344,6 +368,90 @@ class RepositoriosPostgresTest {
 
         String estado = jdbc.queryForObject("SELECT estado FROM pedidos WHERE id = ?", String.class, pedidoId);
         assertThat(estado).isEqualTo("PAGADO");
+    }
+
+    @Test
+    void pagoRepositoryGuardaIdempotenciaSesionYBuscaPorReferencia() {
+        long usuarioId = crearUsuarioUnico();
+        long productoId = crearProductoUnico(5, 1);
+        long pedidoId = crearPedido(usuarioId, productoId, 1);
+        BigDecimal total = jdbc.queryForObject("SELECT total FROM pedidos WHERE id = ?",
+                BigDecimal.class, pedidoId);
+        String clave = "IT-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        String referencia = "PED-IT-" + UUID.randomUUID().toString().substring(0, 8);
+
+        PagoResponse creado = pagoRepo.crear(pedidoId, "WOMPI", referencia, "PENDIENTE", total, clave);
+        pagoRepo.guardarSesion(creado.id(), "SIM-" + referencia);
+
+        PagoDetalle porClave = pagoRepo.buscarPorIdempotencyKey(clave).orElseThrow();
+        assertThat(porClave.id()).isEqualTo(creado.id());
+        assertThat(porClave.idempotencyKey()).isEqualTo(clave);
+        assertThat(porClave.sesionId()).isEqualTo("SIM-" + referencia);
+
+        // el webhook localiza el intento por la referencia que enviamos a la pasarela
+        assertThat(pagoRepo.buscarPorReferencia(referencia).orElseThrow().id()).isEqualTo(creado.id());
+        assertThat(pagoRepo.buscarPorIdempotencyKey("IT-clave-inexistente")).isEmpty();
+        assertThat(pagoRepo.buscarPorReferencia("PED-IT-inexistente")).isEmpty();
+
+        // V5: la clave de idempotencia es única (índice parcial) -> no se duplica el cobro
+        assertThat(catchThrowableOfType(() -> pagoRepo.crear(pedidoId, "WOMPI",
+                referencia + "-2", "PENDIENTE", total, clave), DataAccessException.class))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void facturaRepositoryEmiteUnaSolaVezPorPedidoYDevuelveElEnvio() {
+        long usuarioId = crearUsuarioUnico();
+        long productoId = crearProductoUnico(5, 1);
+        long pedidoId = crearPedido(usuarioId, productoId, 1, "PAGADO");
+        BigDecimal total = jdbc.queryForObject("SELECT total FROM pedidos WHERE id = ?",
+                BigDecimal.class, pedidoId);
+
+        FacturaEmision primera = facturaRepo.emitir(pedidoId, total);
+        FacturaEmision segunda = facturaRepo.emitir(pedidoId, total);
+
+        assertThat(segunda.id()).isEqualTo(primera.id());
+        assertThat(segunda.numero()).isEqualTo(primera.numero());
+        assertThat(primera.numero()).matches("FAC-\\d{4}-\\d{6}");
+        assertThat(primera.total()).isEqualByComparingTo(total);
+        assertThat(facturaRepo.buscarPorPedido(pedidoId).orElseThrow().numero())
+                .isEqualTo(primera.numero());
+
+        // la factura refleja la copia del envío que el pedido guardó al comprar
+        EnvioCopia envio = facturaRepo.buscarEnvioPedido(pedidoId).orElseThrow();
+        assertThat(envio.destinatario()).isEqualTo("Ana Perez");
+        assertThat(envio.ciudad()).isEqualTo("Bogota");
+        assertThat(facturaRepo.buscarEnvioPedido(99999999L)).isEmpty();
+    }
+
+    @Test
+    void webhookEventosRepositoryDeduplicaLasNotificacionesRepetidas() {
+        String eventoId = "IT-" + UUID.randomUUID();
+
+        // la restricción UNIQUE (pasarela, evento_id) de V5 ignora las reenviadas
+        assertThat(webhookEventosRepo.registrarSiNuevo("WOMPI", eventoId)).isTrue();
+        assertThat(webhookEventosRepo.registrarSiNuevo("WOMPI", eventoId)).isFalse();
+        // el mismo id bajo otra pasarela es otro evento
+        assertThat(webhookEventosRepo.registrarSiNuevo("EPAYCO", eventoId)).isTrue();
+    }
+
+    @Test
+    void reporteRepositoryAgregaVentasPorRangoYValorDeInventario() {
+        long usuarioId = crearUsuarioUnico();
+        long productoId = crearProductoUnico(5, 1);
+        crearPedido(usuarioId, productoId, 2, "PAGADO");
+
+        ResumenVentasResponse resumen = reporteRepo.resumen(
+                OffsetDateTime.now().minusDays(1), OffsetDateTime.now().plusDays(1));
+        assertThat(resumen.pedidos()).isGreaterThanOrEqualTo(1);
+        assertThat(resumen.porEstado()).containsKey("PAGADO");
+        assertThat(resumen.topProductos()).isNotEmpty();
+        assertThat(resumen.ventasPorDia()).isNotEmpty();
+
+        ReporteRepository.TotalesInventario inventario = reporteRepo.totalesInventario();
+        assertThat(inventario.productos()).isGreaterThanOrEqualTo(1);
+        assertThat(inventario.unidades()).isGreaterThanOrEqualTo(2);
+        assertThat(inventario.valor()).isGreaterThan(BigDecimal.ZERO);
     }
 
     @Test
@@ -602,20 +710,80 @@ class RepositoriosPostgresTest {
         long usuarioId = crearUsuarioUnico();
         String hash = java.util.HexFormat.of().formatHex(
                 java.util.UUID.randomUUID().toString().replace("-", "").getBytes());
-        refreshTokenRepo.crear(usuarioId, hash, OffsetDateTime.now().plusDays(1));
+        refreshTokenRepo.crearFamilia(usuarioId, hash, OffsetDateTime.now().plusDays(1));
 
         var guardado = refreshTokenRepo.buscarPorHash(hash).orElseThrow();
         assertThat(guardado.usuarioId()).isEqualTo(usuarioId);
         assertThat(guardado.revocado()).isFalse();
+        assertThat(guardado.sesionId()).isNotNull();
 
         assertThat(refreshTokenRepo.revocar(hash)).isEqualTo(1);
-        assertThat(refreshTokenRepo.buscarPorHash(hash).orElseThrow().revocado()).isTrue();
+        assertThat(refreshTokenRepo.buscarPorHash(hash).orElseThrow().usado()).isTrue();
         assertThat(refreshTokenRepo.revocar(hash)).isZero();
 
         String otroHash = java.util.HexFormat.of().formatHex(
                 java.util.UUID.randomUUID().toString().replace("-", "").getBytes());
-        refreshTokenRepo.crear(usuarioId, otroHash, OffsetDateTime.now().plusDays(1));
-        assertThat(refreshTokenRepo.revocarTodosDeUsuario(usuarioId)).isEqualTo(1);
+        refreshTokenRepo.crearFamilia(usuarioId, otroHash, OffsetDateTime.now().plusDays(1));
+        // El primer token quedó "usado" (no revocado): la revocación masiva lo
+        // incluye junto al segundo token todavía vigente.
+        assertThat(refreshTokenRepo.revocarTodosDeUsuario(usuarioId)).isEqualTo(2);
+        assertThat(refreshTokenRepo.buscarPorHash(otroHash).orElseThrow().revocado()).isTrue();
+        assertThat(refreshTokenRepo.buscarPorHash(hash).orElseThrow().revocado()).isTrue();
+    }
+
+    @Test
+    void refreshTokenFamiliaDetectaReusoYRevocaLaCadenaCompleta() {
+        long usuarioId = crearUsuarioUnico();
+        String hash1 = java.util.HexFormat.of().formatHex(
+                java.util.UUID.randomUUID().toString().replace("-", "").getBytes());
+
+        Long familia = refreshTokenRepo.crearFamilia(usuarioId, hash1, OffsetDateTime.now().plusDays(1));
+        var token1 = refreshTokenRepo.buscarPorHash(hash1).orElseThrow();
+        assertThat(token1.sesionId()).isEqualTo(familia);
+
+        // Rotación: el token 1 se marca usado y se encadena el token 2 en la misma familia
+        String hash2 = java.util.HexFormat.of().formatHex(
+                java.util.UUID.randomUUID().toString().replace("-", "").getBytes());
+        Long id2 = refreshTokenRepo.crearEnFamilia(usuarioId, token1.sesionId(), hash2,
+                OffsetDateTime.now().plusDays(1));
+        assertThat(refreshTokenRepo.marcarUsado(hash1, id2)).isEqualTo(1);
+        assertThat(refreshTokenRepo.marcarUsado(hash1, id2)).isZero();
+
+        var token2 = refreshTokenRepo.buscarPorHash(hash2).orElseThrow();
+        assertThat(token2.sesionId()).isEqualTo(familia);
+        assertThat(token2.usado()).isFalse();
+
+        // Reuso del token ya rotado: se revoca la familia entera
+        assertThat(refreshTokenRepo.revocarFamilia(usuarioId, token1.sesionId())).isEqualTo(2);
+        assertThat(refreshTokenRepo.buscarPorHash(hash2).orElseThrow().revocado()).isTrue();
+        assertThat(refreshTokenRepo.revocarFamilia(usuarioId, token1.sesionId())).isZero();
+    }
+
+    @Test
+    void auditoriaRegistraAccionesSinTumbarLaOperacion() {
+        long usuarioId = crearUsuarioUnico();
+
+        auditoria.registrar(usuarioId, "IT-acceso", "pedidos", "42",
+                java.util.Map.of("clave", "valor"));
+        auditoria.registrarActual("IT-actual", "pedidos", "43", null);
+
+        Integer conUsuario = jdbc.queryForObject(
+                "SELECT count(*) FROM auditoria WHERE accion = 'IT-acceso' AND usuario_id = ?",
+                Integer.class, usuarioId);
+        assertThat(conUsuario).isEqualTo(1);
+        String ip = jdbc.queryForObject(
+                "SELECT ip FROM auditoria WHERE accion = 'IT-acceso' AND usuario_id = ?",
+                String.class, usuarioId);
+        assertThat(ip).isNotBlank();
+        String detalle = jdbc.queryForObject(
+                "SELECT detalle::text FROM auditoria WHERE accion = 'IT-acceso' AND usuario_id = ?",
+                String.class, usuarioId);
+        assertThat(detalle).contains("valor");
+
+        // Fuera de petición autenticada la auditoría tampoco debe tumbar la operación
+        Integer sinUsuario = jdbc.queryForObject(
+                "SELECT count(*) FROM auditoria WHERE accion = 'IT-actual'", Integer.class);
+        assertThat(sinUsuario).isEqualTo(1);
     }
 
     // ---------- Helpers ----------

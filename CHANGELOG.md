@@ -2,6 +2,18 @@
 
 ## No publicado
 
+### Pasarelas de pago, facturas y reportes
+
+- Nueva migración `V5__facturas_webhooks_idempotencia.sql`: tabla `facturas` (una por pedido, número `FAC-AAAA-NNNNNN` con secuencia propia), tabla `webhook_eventos` con `UNIQUE (pasarela, evento_id)` y columnas `pagos.idempotency_key` (índice único parcial) y `pagos.sesion_id`.
+- Integración de pasarelas como orquestador: nueva interfaz `PasarelaPago` con implementaciones `WompiPasarela` y `EpaycoPasarela`, resueltas por `PasarelaRegistry`; `POST /api/pagos/sesion` crea la transacción y devuelve `urlPago`/`sesionId` al frontend.
+- Idempotencia saliente: cada intento guarda una `idempotency_key` (UUID) y su `referencia`; los reintentos con la misma clave reutilizan el pago en lugar de duplicar el cobro.
+- Webhooks entrantes idempotentes: `POST /api/webhooks/wompi` y `POST /api/webhooks/epayco` validan la firma (`X-Event-Checksum` para Wompi, `x-signature` para ePayco), verifica el monto y deduplica notificaciones (`duplicado`, `ya-procesado`, `ignorado`). Un pago aprobado marca el pedido `PAGADO` por el trigger de V3.
+- Facturas: `GET /api/pedidos/{id}/factura` y `GET /api/admin/pedidos/{id}/factura` emiten la factura de forma idempotente; solo pedidos pagados (`409` en otro estado).
+- Reportes administrativos: `GET /api/admin/reportes/ventas` (rango ISO-8601, por defecto 30 días) y `GET /api/admin/reportes/inventario`.
+- Limitación de tasa por IP en `/api/**` con ventana deslizante en memoria y puerto `RateLimiter`: 300 peticiones/min generales, 10/min en login/registro/refresh; `429` con `ProblemDetail` y `Retry-After`; los webhooks quedan excluidos.
+- Refactor SOLID: `CalculadoraTotales` extrae el cálculo de totales de `PedidoService` (SRP); las pasarelas y los verificadores de firma se separan por interfaz (OCP/ISP/DIP).
+- `TiendaProperties` incorpora los grupos `rate-limit` y `pagos` (con `Pagos.simulados()` como fábrica de la configuración de pruebas).
+
 ### Lógica de negocio completa
 
 - Se implementó el checkout (`POST /api/pedidos`): valida carrito y dirección, aplica cupones, calcula subtotal, descuento, IVA, envío y total en la API e inserta el pedido con reserva de stock en una sola transacción (los triggers de V3 confirman `numero`, expiración de reserva y totales).
@@ -41,15 +53,18 @@
 
 ### Pruebas
 
+- La suite completa quedó en 118 pruebas con 0 fallos (5 omitidas sin Docker: `PostgresIntegrationTest`).
+- `RepositoriosPostgresTest`: 23 pruebas SQL reales, incluidas la idempotencia de `pagos.idempotency_key`, la emisión única de facturas, la deduplicación de `webhook_eventos` y los agregados de reportes.
+- `FlujoCompletoPostgresTest` cubre de punta a punta la sesión de pasarela simulada con reintento idempotente, el webhook firmado que marca el pedido `PAGADO` y descuenta stock, la notificación duplicada, la firma inválida y la factura/reportes.
+- `PasarelasTest` verifica los checksums de Wompi/ePayco, el rechazo sin secreto configurado y el modo simulado sin llamadas externas.
+- `RateLimitingTest` y `VentanaDeslizanteRateLimiterTest` cubren el `429` con `Retry-After` y la ventana deslizante.
 - `RepositoriosPostgresTest` pasó contra PostgreSQL local en `localhost:5432/tienda_db`: 19 pruebas reales, 0 fallos; cubre CRUD de nuevos repositorios, checkout con cupón, expiración de reservas y reglas `P0001`.
-- Nuevo `FlujoCompletoPostgresTest`: flujo completo por HTTP (registro, refresh/logout, producto admin con imágenes y atributos, carrito, dirección, checkout, reseña rechazada con `422`, pago aprobado, transiciones de estado y reseña final) contra la BD real.
-- La suite completa quedó en 86 pruebas con 0 fallos (5 omitidas sin Docker: `PostgresIntegrationTest`).
 - Las pruebas de endpoints cubren validación de productos (`400`), integridad de datos (`409`), reglas de negocio (`422`) y error inesperado (`500` genérico).
 
 ### Documentación
 
 - Se amplió el README con el árbol del proyecto y un diagrama UML Mermaid de las clases principales.
-- README y CHANGELOG actualizados: se documentan los nuevos módulos, la migración V4 y el mapeo `422`; se retiraron las afirmaciones de endpoints no implementados (`501`).
+- El README documenta el flujo de pasarelas y webhooks, la limitación de tasa, el mapeo SOLID y las variables `RATE_LIMIT_*`, `PAGOS_MODO`, `WOMPI_*` y `EPAYCO_*`.- README y CHANGELOG actualizados: se documentan los nuevos módulos, las migraciones V4–V5 y el mapeo `422`; se retiraron las afirmaciones de endpoints no implementados (`501`).
 
 ### Despliegue
 

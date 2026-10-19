@@ -3,14 +3,12 @@ package com.codeconheiner.tienda.pedidos;
 import com.codeconheiner.tienda.carrito.CarritoRepository;
 import com.codeconheiner.tienda.carrito.dto.CarritoItemResponse;
 import com.codeconheiner.tienda.common.ApiException;
-import com.codeconheiner.tienda.config.TiendaProperties;
-import com.codeconheiner.tienda.cupones.CuponService;
 import com.codeconheiner.tienda.direcciones.DireccionService;
 import com.codeconheiner.tienda.direcciones.dto.DireccionResponse;
 import com.codeconheiner.tienda.pedidos.dto.PedidoRequest;
 import com.codeconheiner.tienda.pedidos.dto.PedidoResponse;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
+import com.codeconheiner.tienda.pedidos.CalculadoraTotales.Totales;
+import com.codeconheiner.tienda.seguridad.Auditoria;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -27,16 +25,16 @@ public class PedidoService {
     private final PedidoRepository repo;
     private final CarritoRepository carritos;
     private final DireccionService direcciones;
-    private final CuponService cupones;
-    private final TiendaProperties props;
+    private final CalculadoraTotales totales;
+    private final Auditoria auditoria;
 
     public PedidoService(PedidoRepository repo, CarritoRepository carritos, DireccionService direcciones,
-            CuponService cupones, TiendaProperties props) {
+            CalculadoraTotales totales, Auditoria auditoria) {
         this.repo = repo;
         this.carritos = carritos;
         this.direcciones = direcciones;
-        this.cupones = cupones;
-        this.props = props;
+        this.totales = totales;
+        this.auditoria = auditoria;
     }
 
     public List<PedidoResponse> listarPorUsuario(Long usuarioId) {
@@ -61,25 +59,19 @@ public class PedidoService {
         }
         DireccionResponse dir = direcciones.obtenerParaPedido(usuarioId, request.direccionId());
 
-        BigDecimal subtotal = items.stream()
-                .map(CarritoItemResponse::subtotal)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal descuento = request.cuponId() == null
-                ? BigDecimal.ZERO
-                : cupones.calcularDescuento(request.cuponId(), subtotal).setScale(0, RoundingMode.HALF_UP);
-        BigDecimal iva = subtotal.multiply(props.iva()).setScale(0, RoundingMode.HALF_UP);
-        BigDecimal costoEnvio = subtotal.compareTo(props.envioGratisDesde()) >= 0
-                ? BigDecimal.ZERO
-                : BigDecimal.valueOf(props.costoEnvioBase());
-        BigDecimal total = subtotal.subtract(descuento).add(iva).add(costoEnvio);
+        Totales importes = totales.calcular(items, request.cuponId());
 
-        Long pedidoId = repo.crear(usuarioId, dir, subtotal, descuento, iva, costoEnvio, total, request.cuponId());
+        Long pedidoId = repo.crear(usuarioId, dir, importes.subtotal(), importes.descuento(),
+                importes.iva(), importes.costoEnvio(), importes.total(), request.cuponId());
         for (CarritoItemResponse item : items) {
             repo.agregarItem(pedidoId, item.productoId(), item.cantidad());
         }
         carritos.vaciarCarrito(carritoId);
-        return repo.obtenerPorId(usuarioId, pedidoId)
+        PedidoResponse creado = repo.obtenerPorId(usuarioId, pedidoId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Pedido no encontrado"));
+        auditoria.registrar(usuarioId, "pedido.creado", "pedidos", String.valueOf(pedidoId),
+                java.util.Map.of("numero", creado.numero(), "total", creado.total()));
+        return creado;
     }
 
     public List<PedidoResponse> listarTodos(String estado) {
@@ -97,9 +89,14 @@ public class PedidoService {
         if (!ESTADOS.contains(nuevo)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Estado de pedido no válido");
         }
+        String anterior = repo.obtenerPorIdAdmin(pedidoId).map(PedidoResponse::estado).orElse(null);
         if (repo.cambiarEstado(pedidoId, nuevo) == 0) {
             throw new ApiException(HttpStatus.NOT_FOUND, "Pedido no encontrado");
         }
+        var detalle = new java.util.HashMap<String, Object>();
+        detalle.put("anterior", anterior);
+        detalle.put("nuevo", nuevo);
+        auditoria.registrarActual("pedido.estado", "pedidos", String.valueOf(pedidoId), detalle);
         return repo.obtenerPorIdAdmin(pedidoId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Pedido no encontrado"));
     }
