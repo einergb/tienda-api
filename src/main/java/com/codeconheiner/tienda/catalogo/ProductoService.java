@@ -58,6 +58,34 @@ public class ProductoService {
         }
     }
 
+    public Long agregarImagen(long id, ImagenRequest request) {
+        verificarProducto(id);
+        return repo.agregarImagen(id, request);
+    }
+
+    public void eliminarImagen(long id, long imagenId) {
+        verificarProducto(id);
+        if (repo.eliminarImagen(id, imagenId) == 0) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "Imagen no encontrada");
+        }
+    }
+
+    public Long agregarAtributo(long id, AtributoRequest request) {
+        verificarProducto(id);
+        return repo.agregarAtributo(id, request);
+    }
+
+    public void eliminarAtributo(long id, String clave) {
+        verificarProducto(id);
+        if (repo.eliminarAtributo(id, clave) == 0) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "Atributo no encontrado");
+        }
+    }
+
+    private void verificarProducto(long id) {
+        repo.buscarPorId(id).orElseThrow(ProductoService::noEncontrado);
+    }
+
     private int garantia(ProductoRequest r) {
         return r.garantiaMeses() != null ? r.garantiaMeses() : GARANTIA_POR_DEFECTO;
     }

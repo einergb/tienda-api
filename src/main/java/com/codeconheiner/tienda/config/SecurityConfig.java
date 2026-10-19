@@ -39,7 +39,16 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/catalogo/**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/inventario/productos/*/stock").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/resenas/producto/*").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                .requestMatchers("/api/carrito/**").authenticated()
+                .requestMatchers("/api/direcciones/**").authenticated()
+                .requestMatchers("/api/cupones/**").authenticated()
+                .requestMatchers("/api/resenas/**").authenticated()
+                .requestMatchers("/api/pedidos/**").authenticated()
+                .requestMatchers("/api/pagos/**").authenticated()
+                .requestMatchers("/api/envios/**").authenticated()
                 .anyRequest().authenticated())
             .exceptionHandling(e -> e
                 .authenticationEntryPoint((request, response, exception) -> escribirProblema(

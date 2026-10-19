@@ -11,6 +11,7 @@ public record TiendaProperties(
         String moneda,
         BigDecimal iva,
         BigDecimal envioGratisDesde,
+        long costoEnvioBase,
         int stockMinimoAlerta,
         int reservaStockMinutos,
         Jwt jwt,

@@ -38,4 +38,31 @@ public class AdminProductoController {
     public void desactivar(@PathVariable long id) {
         service.desactivar(id);
     }
+
+    @PostMapping("/{id}/imagenes")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ImagenProductoResponse agregarImagen(@PathVariable long id, @Valid @RequestBody ImagenRequest request) {
+        Long imagenId = service.agregarImagen(id, request);
+        return new ImagenProductoResponse(imagenId, request.url(), request.orden() == null ? 0 : request.orden(),
+                Boolean.TRUE.equals(request.esPrincipal()));
+    }
+
+    @DeleteMapping("/{id}/imagenes/{imagenId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void eliminarImagen(@PathVariable long id, @PathVariable long imagenId) {
+        service.eliminarImagen(id, imagenId);
+    }
+
+    @PostMapping("/{id}/atributos")
+    @ResponseStatus(HttpStatus.CREATED)
+    public AtributoRequest agregarAtributo(@PathVariable long id, @Valid @RequestBody AtributoRequest request) {
+        service.agregarAtributo(id, request);
+        return request;
+    }
+
+    @DeleteMapping("/{id}/atributos/{clave}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void eliminarAtributo(@PathVariable long id, @PathVariable String clave) {
+        service.eliminarAtributo(id, clave);
+    }
 }

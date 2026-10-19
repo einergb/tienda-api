@@ -1,72 +1,85 @@
 # AGENTS.md - tienda-api
 
-This file gives OpenCode agents repo-specific guidance to avoid mistakes and work efficiently. Focus on non-obvious, verifiable facts.
+Este archivo proporciona orientación específica del repositorio para agentes de OpenCode, con el fin de evitar errores y trabajar de manera eficiente. Enfócate en hechos no obvios y verificables.
 
-## Tech stack
+## Stack tecnológico
 - Spring Boot 3.3.5 (parent), Java 21, Maven
 - JDBC (JdbcTemplate), PostgreSQL, Flyway migrations (classpath:db/migration)
 - Spring Security + JWT (jjwt 0.12.6)
 - Validation, Actuator, springdoc-openapi 2.6.0
 - Tests: Spring Boot Test + Security Test (WebMvcTest with in-memory fakes)
 
-## App structure & boundaries
+## Estructura y límites de la aplicación
 - Base package: `com.codeconheiner.tienda`
 - Main: `TiendaApplication` (uses `@ConfigurationPropertiesScan`)
 - Domains:
-  - `auth/`: AuthController, AuthService, JwtService, JwtAuthFilter; DTOs for registro/login/token
-  - `catalogo/`: public catalog + admin product mgmt (AdminProductoController under `/api/admin/productos`), ProductoService (logical delete via `activo=false`), repositories
+  - `auth/`: AuthController (registro/login/refresh/logout/password), AuthService, JwtService, JwtAuthFilter, RefreshTokenRepository; DTOs for registro/login/token/refresh
+  - `catalogo/`: public catalog + admin product mgmt (AdminProductoController under `/api/admin/productos`, incl. `/imagenes` y `/atributos`), ProductoService (logical delete via `activo=false`), repositories
   - `usuarios/`: Usuario entity + UsuarioRepository (joins roles)
-  - `common/`: ApiException + GlobalExceptionHandler (RFC 7807 ProblemDetail). Handles validation (400 + `errores` map), unreadable JSON (400), ApiException, DataIntegrityViolationException (409), generic 500
-  - `config/`: SecurityConfig, TiendaProperties, AdminBootstrap
-- Scaffolding present (not exposed): `carrito`, `inventario`, `pedidos`, `pagos`, `envios` (schema/migrations exist; README notes these aren't implemented as API yet)
-- Flyway: enabled, locations `db/migration`, `baseline-on-migrate: true`, `baseline-version: 3`. V1 schema, V2 seeds (roles ADMIN/CLIENTE + 5 categorías), V3 adds triggers/functions (raises SQL exceptions - handler maps data integrity to 409; business rule errors from V3 SQLSTATE P0001 conceptually -> 422 per comments, but current GlobalExceptionHandler treats most DB rule violations as 409 via DataIntegrityViolationException).
+  - `common/`: ApiException + GlobalExceptionHandler (RFC 7807 ProblemDetail). Handles validation (400 + `errores` map), unreadable JSON (400), ApiException, DataIntegrityViolationException (409, salvo regla P0001), SQLSTATE P0001 (422), generic 500
+  - `config/`: SecurityConfig, TiendaProperties, AdminBootstrap, TareaExpiracionReservas (@Component + @EnableScheduling, corre expirar_reservas() cada 60 s)
+  - `direcciones/`, `cupones/`, `resenas/`: módulos completos (controller + service + repository + DTOs)
+  - `pedidos/`: PedidoController (checkout en `crear`), AdminPedidoController (transiciones de estado), PedidoService, PedidoRepository
+  - `pagos/`: PagoController, PagoService (estado opcional; APROBADO marca el pedido PAGADO vía trigger)
+  - `envios/`: EnvioController + AdminEnvioController (CRUD admin)
+  - `carrito/`, `inventario/`: CarritoController/CarritoService e InventarioController + AdminInventarioController (`/stock-bajo` sobre `v_stock_bajo`)
+- Flyway: enabled, locations `db/migration`, `baseline-on-migrate: true`, `baseline-version: 3`. V1 schema, V2 seeds (roles ADMIN/CLIENTE + 5 categorías), V3 triggers/functions (RAISE EXCEPTION con SQLSTATE P0001), V4 `refresh_tokens` (hash SHA-256, rotación, 7 días de expiración).
 
-## Entry points & routing
-- Public: `/api/auth/**`, `/actuator/health/**`, `/actuator/info`, Swagger (`/v3/api-docs/**`, `/swagger-ui/**`, `/swagger-ui.html`), `GET /api/catalogo/**`
+## Puntos de entrada y enrutamiento
+- Public: `/api/auth/**`, `/actuator/health/**`, `/actuator/info`, Swagger (`/v3/api-docs/**`, `/swagger-ui/**`, `/swagger-ui.html`), `GET /api/catalogo/**`, `GET /api/resenas/producto/**`, `GET /api/cupones/validar`, `GET /api/inventario/productos/*/stock`
 - Admin-only: `/api/admin/**` requires role `ADMIN` (hasRole). SecurityConfig returns ProblemDetail on 401/403 with exact Spanish messages matching tests.
+- Authenticated: `/api/carrito/**`, `/api/direcciones/**`, `/api/pedidos/**`, `/api/pagos/**`, `/api/resenas/**`, `/api/envios/pedido/**` (cualquier rol autenticado).
 - Catalog rule: public product detail only returned if `activo` AND `stockDisponible > 0` (see ProductoService.detallePublico). Logical delete = `desactivar()` sets `activo=false`.
 
-## Build, test, run
+## Construcción, pruebas y ejecución
 - Build: `mvn -B -q package -DskipTests` (Docker uses this)
 - Test all: `mvn test`
 - Run single test class: `mvn test -Dtest=ApiEndpointsTest`
 - Run single test method: `mvn test -Dtest=ApiEndpointsTest#registroYLoginDevuelvenToken`
+- Integration tests vs local PG (`localhost:5432/tienda_db`, `tienda_user`/`tienda_pass`, no Docker needed): `mvn test -Dtest=RepositoriosPostgresTest,FlujoCompletoPostgresTest` (Flyway aplica V1–V4; limpian fixtures `it-%`/`IT-%`).
+- `PostgresIntegrationTest` usa Testcontainers con `disabledWithoutDocker = true`: sin Docker se omite (5 tests), no falla.
 - Run app locally: `mvn spring-boot:run` (requires DB + env). Or via Docker compose.
 - Dev quick check: build + tests. Tests use @WebMvcTest with in-memory beans (see ApiEndpointsTest.TestBeans), so no external DB needed.
 
-## Env & config
+## Variables de entorno y configuración
 - application.yml reads from env vars:
   - `DB_URL` (default `jdbc:postgresql://localhost:5432/tienda`)
   - `DB_USER` (default `tienda`), `DB_PASSWORD` (default `tienda`)
   - `JWT_SECRET` (required) - jjwt uses HMAC-SHA; must be >= 32 bytes. `.env.example` shows `openssl rand -base64 48` to generate.
   - `ADMIN_EMAIL` (default `admin@tienda.local`), `ADMIN_PASSWORD` (empty by default) - AdminBootstrap creates admin if password non-blank and user doesn't exist.
   - `CORS_ORIGINS` (default `http://localhost:5173`), `TIENDA_NOMBRE` (default `TechStore`)
-- tienda props (TiendaProperties): nombre, moneda, iva, envioGratisDesde, stockMinimoAlerta, reservaStockMinutos, jwt{secret, expiracionMinutos}, admin{email,password}, cors{origenesPermitidos}.
+- tienda props (TiendaProperties, record de 10 componentes — todos los `new TiendaProperties(...)` deben llevarlos): nombre, moneda, iva, envioGratisDesde, costoEnvioBase, stockMinimoAlerta, reservaStockMinutos, jwt{secret, expiracionMinutos}, admin{email,password}, cors{origenesPermitidos}. `costoEnvioBase` (application.yml `costo-envio-base`, 10000) se usa en el checkout cuando el subtotal no alcanza `envioGratisDesde`.
 
-## Docker / deployment
+## Docker / despliegue
 - Multi-stage Dockerfile: Maven build (go-offline) then JRE image, non-root user `app`, exposes 8080, HEALTHCHECK hits `/actuator/health`.
 - docker-compose.yml: service `api`, container `tienda-api`, binds `192.168.0.150:8080:8080`, uses external network `homelab_net`, connects to `web_db:5432` (DB_URL set accordingly). Requires `.env` with DB_* and JWT_SECRET.
 - DB host in containers: `web_db` on `homelab_net`; external host access on 5433 (per README). API uses internal network.
 
-## Testing specifics (must know)
-- WebMvc slice tests mock infrastructure: ApiEndpointsTest provides in-memory UsuarioRepository, in-memory ProductoService, JwtService, TiendaProperties. Keep this pattern if extending MVC tests.
-- Tests assert exact Spanish ProblemDetail messages (match GlobalExceptionHandler/SecurityConfig): e.g. 400 validation "Los datos enviados no son válidos." with `errores` by field; 400 malformed JSON "El cuerpo de la solicitud no contiene JSON válido."; 401 auth missing "Autenticación requerida: inicia sesión o proporciona un token válido."; 403 "No tienes permisos para realizar esta operación."; 404 "Producto no encontrado"; 409 duplicate "El correo ya está registrado." Also DataIntegrityViolationException maps to 409 with generic constraint message.
-- AuthService normalizes email (lowercase, trimmed) and name trimmed; stores password with BCrypt; login checks activo and password match, returns generic 401 for bad creds.
+## Especificidades de pruebas (importante conocer)
+- WebMvc slice tests mock infrastructure: ApiEndpointsTest provides in-memory UsuarioRepository, in-memory ProductoService, JwtService, TiendaProperties. Keep this pattern if extending MVC tests. `@WebMvcTest` (sin lista de controllers) carga TODOS los controllers: cada controller nuevo necesita su bean/fake en `TestBeans`. `ModulosEndpointsTest` sí fija la lista de controllers explícitamente.
+- `ApiEndpointsTest.InMemoryUsuarioRepository.buscarPorEmail` solo devuelve usuarios creados vía registro: tests con `@WithMockUser` que resuelven el usuario por email (direcciones, pagos) deben registrar el usuario primero o usar un fake que devuelva un id fijo. `@BeforeEach` limpia usuarios y productos entre tests.
+- Tests assert exact Spanish ProblemDetail messages (match GlobalExceptionHandler/SecurityConfig): e.g. 400 validation "Los datos enviados no son válidos." with `errores` by field; 400 malformed JSON "El cuerpo de la solicitud no contiene JSON válido."; 401 auth missing "Autenticación requerida: inicia sesión o proporciona un token válido."; 403 "No tienes permisos para realizar esta operación."; 404 "Producto no encontrado"; 409 duplicate "El correo ya está registrado."; 422 con el mensaje exacto del `RAISE EXCEPTION` de V3 (p. ej. "Transicion de estado no permitida: ENTREGADO -> PAGADO"). DataIntegrityViolationException sin regla P0001 → 409 con mensaje genérico de restricción.
+- AuthService normalizes email (lowercase, trimmed) and name trimmed; stores password with BCrypt; login checks activo and password match, returns generic 401 for bad creds. Refresh tokens se guardan como hash SHA-256 hex (64 chars, columna VARCHAR(64)).
 - Tests need JWT secret >=32 bytes in test props (see test code).
 
-## Database & migrations quirks
-- V1: uses NUMERIC(12,0) for COP amounts (no decimals). Cupones PORCENTAJE uses NUMERIC(12,2). 
-- V3 adds business logic in PL/pgSQL (triggers, functions) - e.g. `reservar_stock`, `fn_carrito_item_validar` validates stock vs reserved and raises exceptions; `fn_pedido_antes_insert` validates coupons, sets numero, reserva expiry. Errors via `RAISE EXCEPTION` may surface as DataIntegrityViolationException depending on execution path - GlobalExceptionHandler logs cause and returns 409 with generic constraint message. This is intentional per migration comment noting future 422 mapping possibility.
+## Particularidades de base de datos y migraciones
+- V1: uses NUMERIC(12,0) for COP amounts (no decimals). Cupones PORCENTAJE uses NUMERIC(12,2). `pedidos` tiene CHECK `total = subtotal - descuento + iva + costo_envio`.
+- V3 adds business logic in PL/pgSQL (triggers, functions) - e.g. `reservar_stock`, `fn_carrito_item_validar` valida stock reservado; `fn_pedido_antes_insert` asigna numero, reserva_expira_en y valida/aplica cupones; `fn_pedido_cambio_estado` valida la máquina de estados (PENDIENTE→PAGADO→EN_PREPARACION→ENVIADO→ENTREGADO→DEVUELTO) y descuenta stock al PAGADO; `fn_direccion_unica_principal`; `fn_resena_compra_verificada` exige pedido ENTREGADO.
+- `RAISE EXCEPTION` (SQLSTATE P0001) → GlobalExceptionHandler responde **422** con el mensaje del trigger. Detalle no obvio: el mensaje del driver termina con `\n  Where: PL/pgSQL function ...` (con sangría), por eso la limpieza usa la regex `\R\s*Where:` y no un `indexOf("\nWhere:")`.
+- V4: tabla `refresh_tokens` (usuario_id FK cascade, hash único, expirado_en, revocado). AuthService rota al refrescar y revoca al hacer logout o cambiar contraseña.
 - Seed roles: ADMIN, CLIENTE. Seed categories: Computadores, Celulares, Audio, Gaming, Accesorios.
 - Slugs generated from nombre+sku (normalize, remove diacritics, alphanumeric-dash).
+- TRAMPA de Java: los text blocks recortan espacios finales de línea; `SELECT """ + COLUMNAS + """` genera `SELECTid...` sin espacio. Armar SQL concatenado con strings normales (`"SELECT " + COLUMNAS + " FROM ..."`) o usar `\s`.
 
-## Commands to prefer (exact, non-obvious)
-- Quick verification: `mvn test` (no external services). WebMvc tests don't require DB.
+## Comandos a preferir (exactos, no obvios)
+- Quick verification: `mvn test` (no external services). WebMvc tests don't require DB (PostgresIntegrationTest se omite sin Docker).
 - Focused: `mvn test -Dtest=ApiEndpointsTest,AuthServiceTest`
+- Integration con PG local: `mvn test -Dtest=RepositoriosPostgresTest,FlujoCompletoPostgresTest`
 - Build jar: `mvn package` (skipping tests optional as above)
 - Run with local DB: ensure PostgreSQL running, set env (or .env), then `mvn spring-boot:run`.
+- OJO con la caché incremental de Maven: tras cambios amplios de código de prueba, `rm -rf target/test-classes` antes de `mvn test-compile` para no ocultar errores de compilación.
 
-## Conventions & gotchas
+## Convenciones y consideraciones importantes
 - Logical delete only (productos desactivados kept). Public catalog never returns inactive or zero-stock items.
 - Email uniqueness case-insensitive (DB unique index on LOWER(email), repo checks LOWER).
 - ProblemDetail everywhere for errors (no custom error bodies except ProblemDetail + optional `errores`).

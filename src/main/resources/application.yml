@@ -32,6 +32,7 @@ tienda:
   moneda: COP
   iva: 0.19
   envio-gratis-desde: 200000
+  costo-envio-base: 10000
   stock-minimo-alerta: 5
   reserva-stock-minutos: 15
   jwt:

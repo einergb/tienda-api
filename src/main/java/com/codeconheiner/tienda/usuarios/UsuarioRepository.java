@@ -36,6 +36,18 @@ public class UsuarioRepository {
         return n != null && n > 0;
     }
 
+    public Optional<Usuario> buscarPorId(Long id) {
+        return jdbc.query("""
+                SELECT u.id, u.nombre, u.email, u.password_hash, r.nombre AS rol, u.activo
+                FROM usuarios u JOIN roles r ON r.id = u.rol_id
+                WHERE u.id = ?
+                """, MAPPER, id).stream().findFirst();
+    }
+
+    public void actualizarPassword(Long id, String passwordHash) {
+        jdbc.update("UPDATE usuarios SET password_hash = ? WHERE id = ?", passwordHash, id);
+    }
+
     public Usuario crear(String nombre, String email, String passwordHash, String rol) {
         Long id = jdbc.queryForObject("""
                 INSERT INTO usuarios (nombre, email, password_hash, rol_id)

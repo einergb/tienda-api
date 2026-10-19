@@ -2,6 +2,7 @@ package com.codeconheiner.tienda.catalogo;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -34,7 +35,9 @@ public class ProductoRepository {
             rs.getString("marca"),
             rs.getInt("garantia_meses"),
             rs.getInt("stock_disponible"),
-            rs.getBoolean("activo"));
+            rs.getBoolean("activo"),
+            List.of(),
+            Map.of());
 
     private final JdbcTemplate jdbc;
 
@@ -64,7 +67,60 @@ public class ProductoRepository {
     }
 
     public Optional<ProductoResponse> buscarPorId(long id) {
-        return jdbc.query(BASE + " WHERE p.id = ?", MAPPER, id).stream().findFirst();
+        return jdbc.query(BASE + " WHERE p.id = ?", MAPPER, id).stream().findFirst()
+                .map(p -> new ProductoResponse(p.id(), p.sku(), p.nombre(), p.slug(), p.descripcion(), p.precio(),
+                        p.categoriaId(), p.categoria(), p.marcaId(), p.marca(), p.garantiaMeses(),
+                        p.stockDisponible(), p.activo(), imagenes(id), atributos(id)));
+    }
+
+    private List<ImagenProductoResponse> imagenes(long productoId) {
+        return jdbc.query("""
+                SELECT id, url, orden, es_principal
+                FROM producto_imagenes WHERE producto_id = ?
+                ORDER BY orden, id
+                """, (rs, n) -> new ImagenProductoResponse(
+                rs.getLong("id"),
+                rs.getString("url"),
+                rs.getInt("orden"),
+                rs.getBoolean("es_principal")), productoId);
+    }
+
+    private java.util.LinkedHashMap<String, String> atributos(long productoId) {
+        java.util.LinkedHashMap<String, String> resultado = new java.util.LinkedHashMap<>();
+        jdbc.query("""
+                SELECT clave, valor FROM producto_atributos WHERE producto_id = ? ORDER BY clave
+                """, (org.springframework.jdbc.core.RowCallbackHandler) rs ->
+                resultado.put(rs.getString("clave"), rs.getString("valor")), productoId);
+        return resultado;
+    }
+
+    public Long agregarImagen(long productoId, ImagenRequest r) {
+        if (Boolean.TRUE.equals(r.esPrincipal())) {
+            jdbc.update("UPDATE producto_imagenes SET es_principal = FALSE WHERE producto_id = ? AND es_principal",
+                    productoId);
+        }
+        return jdbc.queryForObject("""
+                INSERT INTO producto_imagenes (producto_id, url, orden, es_principal)
+                VALUES (?, ?, ?, ?)
+                RETURNING id
+                """, Long.class, productoId, r.url().trim(), r.orden() == null ? 0 : r.orden(),
+                Boolean.TRUE.equals(r.esPrincipal()));
+    }
+
+    public int eliminarImagen(long productoId, long imagenId) {
+        return jdbc.update("DELETE FROM producto_imagenes WHERE id = ? AND producto_id = ?", imagenId, productoId);
+    }
+
+    public Long agregarAtributo(long productoId, AtributoRequest r) {
+        return jdbc.queryForObject("""
+                INSERT INTO producto_atributos (producto_id, clave, valor)
+                VALUES (?, ?, ?)
+                RETURNING id
+                """, Long.class, productoId, r.clave().trim(), r.valor().trim());
+    }
+
+    public int eliminarAtributo(long productoId, String clave) {
+        return jdbc.update("DELETE FROM producto_atributos WHERE producto_id = ? AND clave = ?", productoId, clave);
     }
 
     public long crear(ProductoRequest r, String slug, int garantiaMeses) {
