@@ -26,6 +26,7 @@ Antes de iniciar la API, el contenedor PostgreSQL debe estar activo, llamarse `w
 - Consulta de la configuración visible de la tienda y de categorías activas.
 - Consulta pública de productos activos con stock disponible, búsqueda por texto, filtro por categoría y paginación; el detalle incluye imágenes y atributos del producto.
 - Administración de productos para usuarios `ADMIN`: crear, actualizar y desactivar, además de gestionar imágenes (`/imagenes`) y atributos (`/atributos`). La desactivación es lógica, por lo que conserva el producto y su historial.
+- Las imágenes de productos se registran como URLs; no hay carga de archivos ni almacenamiento de objetos MinIO.
 - Carrito de compras por usuario autenticado: ver carrito, agregar/actualizar/eliminar items y vaciar carrito. Valida stock disponible.
 - Direcciones de envío del usuario: crear, listar, actualizar y eliminar (una dirección principal por usuario, garantizada por trigger).
 - Checkout (`POST /api/pedidos`): valida el carrito y la dirección, aplica cupones, calcula subtotal, descuento, IVA, envío y total, inserta el pedido, reserva el stock y vacía el carrito en una sola transacción.
@@ -39,7 +40,7 @@ Antes de iniciar la API, el contenedor PostgreSQL debe estar activo, llamarse `w
 - Facturas: `GET /api/pedidos/{id}/factura` (y su versión admin) emite una factura numerada (`FAC-AAAA-NNNNNN`) para pedidos pagados; la emisión es idempotente (una sola factura por pedido).
 - Reportes administrativos: resumen de ventas por rango (`/api/admin/reportes/ventas`) y estado del inventario (`/api/admin/reportes/inventario`).
 - Pasarelas de pago (Wompi y ePayco): el backend orquesta el checkout con `POST /api/pagos/sesion`, devuelve los datos de la sesión al frontend y confirma el pago por webhook (`POST /api/webhooks/wompi|epayco`). La idempotencia es doble: `idempotency-key` saliente por intento y deduplicación de webhooks entrantes.
-- Limitación de tasa por IP en `/api/**`: límite general (300/min por defecto) y límite más estricto en las rutas de autenticación (10/min); los webhooks quedan excluidos.
+- Limitación de tasa por IP en `/api/**` en memoria por instancia: límite general (300/min por defecto) y límite más estricto en las rutas de autenticación (10/min); los webhooks quedan excluidos. No usa Redis ni comparte contadores entre réplicas.
 - Respuestas de error en formato `ProblemDetail`, con validaciones en español y códigos HTTP diferenciados; las reglas de negocio de la base (`RAISE EXCEPTION`, SQLSTATE `P0001`) responden `422` con el mensaje del trigger.
 - Servicios organizados con principios SOLID: cada pasarela implementa la interfaz `PasarelaPago` y se resuelve por `PasarelaRegistry` (OCP); la verificación de firmas se separa por pasarela (`VerificadorFirmaWebhook`, ISP); los totales del checkout quedan aislados en `CalculadoraTotales` (SRP).
 
@@ -208,33 +209,37 @@ En la capa de servicio, una excepción `IntegrityViolationException` sin regla d
 ## Pruebas automatizadas
 
 ```bash
-# Unitarias y endpoints MockMvc
-mvn clean test
+# Unitarias y endpoints MockMvc (no necesitan BD)
+mvn -Dtest='AuthServiceTest,ApiEndpointsTest,ModulosEndpointsTest,RateLimitingTest,VentanaDeslizanteRateLimiterTest,PasarelasTest' test
 
 # SQL de repositorios contra la BD auxiliar local (incluye checkout, cupones, reseñas, facturas, webhooks y reportes)
-mvn -Dtest=RepositoriosPostgresTest test
+mvn -Dtest='RepositoriosPostgresTest,FlujoCompletoPostgresTest' test
 
 # Flujo completo por HTTP contra la BD auxiliar local (registro, checkout, sesión de pasarela, webhook, factura, reportes)
 mvn -Dtest=FlujoCompletoPostgresTest test
 
 # Integración contra PostgreSQL efímera (Testcontainers)
 mvn -Dtest=PostgresIntegrationTest test
+
+# Todo: unitarias, MockMvc y ambas integraciones PostgreSQL
+mvn clean test
 ```
 
 ### PostgreSQL auxiliar local
 
 `RepositoriosPostgresTest` y `FlujoCompletoPostgresTest` se conectan explícitamente a `localhost:5432/tienda_db` con `tienda_user`; no leen `DB_URL` y no apuntan a `web_db`. Al iniciar el contexto, Flyway aplica V1–V5 si la base está vacía.
 
-En el servidor de pruebas, revisa primero si el contenedor ya existe:
+En Fedora, el contenedor auxiliar existente se llama `postgres-tienda`. Comprueba que esté activo y que la BD responda:
 
 ```bash
-docker ps -a --filter name=tienda-postgres-pruebas
+docker ps --filter name=postgres-tienda
+docker exec postgres-tienda pg_isready -U tienda_user -d tienda_db
 ```
 
-Si no existe, créalo con un volumen persistente y el puerto publicado solo en loopback:
+Si ya está corriendo, no crees otro. Solo si no existe, créalo con un volumen persistente y el puerto publicado solo en loopback:
 
 ```bash
-docker run -d --name tienda-postgres-pruebas \
+docker run -d --name postgres-tienda \
   -e POSTGRES_DB=tienda_db \
   -e POSTGRES_USER=tienda_user \
   -e POSTGRES_PASSWORD=tienda_pass \
@@ -243,9 +248,9 @@ docker run -d --name tienda-postgres-pruebas \
   postgres:16
 ```
 
-Si ya existe pero está detenido, arráncalo con `docker start tienda-postgres-pruebas`. La suite verifica que la conexión sea `tienda_db`, limpia al inicio solo fixtures antiguos con prefijos de prueba `it-*`/`IT-*`, y al final elimina únicamente los IDs que creó. No la apuntes a la BD productiva ni elimines el volumen para limpiar pruebas.
+Si existe pero está detenido, arráncalo con `docker start postgres-tienda`. `RepositoriosPostgresTest` verifica que la conexión sea `tienda_db`, limpia al inicio fixtures antiguos con prefijos `it-*`/`IT-*` y al final elimina únicamente los IDs que creó. No la apuntes a `web_db` ni elimines el volumen para limpiar pruebas.
 
-`PostgresIntegrationTest` es independiente y levanta otra PostgreSQL temporal con Testcontainers. Requiere Docker y Surefire fija Docker API `1.40`; en un equipo sin daemon estos tests se omiten. En el servidor, `mvn clean test` ejecuta tanto `RepositoriosPostgresTest` contra `tienda_db` como `PostgresIntegrationTest` contra su contenedor temporal.
+`PostgresIntegrationTest` es independiente y levanta otra PostgreSQL temporal con Testcontainers. Requiere que el daemon Docker sea accesible desde el proceso Maven; Surefire fija Docker API `1.40`. Si no hay daemon accesible, los 5 tests de Testcontainers se omiten. `mvn clean test` ejecuta actualmente 129 pruebas; para que ninguna se omita, Maven debe poder acceder tanto a PostgreSQL auxiliar en `localhost:5432/tienda_db` como al daemon Docker.
 
 ## Probar
 

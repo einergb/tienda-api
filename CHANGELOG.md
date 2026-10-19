@@ -53,8 +53,8 @@
 
 ### Pruebas
 
-- La suite completa quedó en 118 pruebas con 0 fallos (5 omitidas sin Docker: `PostgresIntegrationTest`).
-- `RepositoriosPostgresTest`: 23 pruebas SQL reales, incluidas la idempotencia de `pagos.idempotency_key`, la emisión única de facturas, la deduplicación de `webhook_eventos` y los agregados de reportes.
+- La ejecución actual de `mvn test` reportó 129 pruebas, 0 fallos y 5 omitidas sin Docker (`PostgresIntegrationTest`).
+- `RepositoriosPostgresTest`: 25 pruebas SQL reales contra `tienda_db`, incluidas idempotencia, facturas, webhooks, reportes, checkout y reglas V3.
 - `FlujoCompletoPostgresTest` cubre de punta a punta la sesión de pasarela simulada con reintento idempotente, el webhook firmado que marca el pedido `PAGADO` y descuenta stock, la notificación duplicada, la firma inválida y la factura/reportes.
 - `PasarelasTest` verifica los checksums de Wompi/ePayco, el rechazo sin secreto configurado y el modo simulado sin llamadas externas.
 - `RateLimitingTest` y `VentanaDeslizanteRateLimiterTest` cubren el `429` con `Retry-After` y la ventana deslizante.
@@ -64,7 +64,8 @@
 ### Documentación
 
 - Se amplió el README con el árbol del proyecto y un diagrama UML Mermaid de las clases principales.
-- El README documenta el flujo de pasarelas y webhooks, la limitación de tasa, el mapeo SOLID y las variables `RATE_LIMIT_*`, `PAGOS_MODO`, `WOMPI_*` y `EPAYCO_*`.- README y CHANGELOG actualizados: se documentan los nuevos módulos, las migraciones V4–V5 y el mapeo `422`; se retiraron las afirmaciones de endpoints no implementados (`501`).
+- El README documenta el flujo de pasarelas y webhooks, la limitación de tasa, el mapeo SOLID y las variables `RATE_LIMIT_*`, `PAGOS_MODO`, `WOMPI_*` y `EPAYCO_*`.
+- README y CHANGELOG documentan los nuevos módulos, las migraciones V4–V5 y el mapeo `422`; se retiraron las afirmaciones de endpoints no implementados (`501`).
 
 ### Despliegue
 
@@ -92,8 +93,8 @@
 ### Verificado localmente
 
 - Antes de añadir los módulos y los tests de repositorios locales, `mvn clean test` pasó en homelab: 22 pruebas, 0 fallos y 0 omitidas.
-- `mvn -Dtest=RepositoriosPostgresTest test` pasó contra PostgreSQL 16.15 en `localhost:5432/tienda_db`: 9 pruebas SQL reales, 0 fallos y 0 omitidas; Flyway validó V1–V3.
+- `mvn -Dtest=RepositoriosPostgresTest test` pasó contra PostgreSQL 16.15 en `localhost:5432/tienda_db`: 25 pruebas SQL reales, 0 fallos y 0 omitidas; Flyway validó V1–V3.
 - `RepositoriosPostgresTest` verifica que usa `tienda_db` y limpia solo fixtures de prueba identificados por prefijos/IDs propios.
-- En Fedora, la última ejecución de `mvn test` ejecutó 58 pruebas con 0 fallos; 5 de Testcontainers se omitieron porque ese entorno no tiene Docker.
+- En Fedora, la última ejecución de `mvn test` ejecutó 129 pruebas con 0 fallos; 5 de Testcontainers se omitieron porque ese entorno no tiene Docker.
 - Las pruebas de endpoints cubren validación de productos (`400`), integridad de datos (`409`) y error inesperado (`500` genérico).
 
