@@ -872,7 +872,14 @@ class ModulosEndpointsTest {
                     new TiendaProperties.RateLimit(300, 10, 60),
                     new TiendaProperties.Pagos("simulado",
                             new TiendaProperties.Pagos.Wompi(null, null, null, "wompi-test-secreto", null),
-                            new TiendaProperties.Pagos.Epayco(null, null, null, "epayco-test-llave")));
+                            new TiendaProperties.Pagos.Epayco(null, null, null, "epayco-test-llave")),
+                    new TiendaProperties.Captcha("test-secret", null),
+                    new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"));
+        }
+
+        @Bean
+        com.codeconheiner.tienda.catalogo.storage.ImageStorage imageStorage() {
+            return new com.codeconheiner.tienda.catalogo.storage.UrlOnlyImageStorage();
         }
 
         @Bean

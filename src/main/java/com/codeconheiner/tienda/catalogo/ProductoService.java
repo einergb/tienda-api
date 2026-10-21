@@ -58,6 +58,19 @@ public class ProductoService {
         }
     }
 
+    @Transactional(readOnly = true)
+    public List<ProductoResponse> listarTodos() {
+        return repo.findAll();
+    }
+
+    @Transactional
+    public ProductoResponse reactivar(long id) {
+        if (repo.activar(id) == 0) {
+            throw noEncontrado();
+        }
+        return repo.buscarPorId(id).orElseThrow(ProductoService::noEncontrado);
+    }
+
     public Long agregarImagen(long id, ImagenRequest request) {
         verificarProducto(id);
         return repo.agregarImagen(id, request);

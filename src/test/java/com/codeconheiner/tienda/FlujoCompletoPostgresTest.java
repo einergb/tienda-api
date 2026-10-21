@@ -97,24 +97,30 @@ class FlujoCompletoPostgresTest {
     @Test
     void flujoCompletoValidaReglasDeNegocioEn422() throws Exception {
         // ---------- usuarios ----------
-        long adminId = jdbc.queryForObject("""
-                INSERT INTO usuarios (nombre, email, password_hash, rol_id)
-                VALUES ('Admin Integracion', ?, ?, (SELECT id FROM roles WHERE nombre = 'ADMIN'))
-                RETURNING id
-                """, Long.class, emailAdmin, encoder.encode("admin-clave-segura"));
+        try {
+            jdbc.update("""
+                    INSERT INTO usuarios (nombre, email, password_hash, rol_id, activo, email_verificado, estado)
+                    VALUES ('Admin Integracion', ?, ?, (SELECT id FROM roles WHERE nombre = 'ADMIN'), TRUE, TRUE, 'ACTIVO')
+                    """, emailAdmin, encoder.encode("admin-clave-segura"));
+        } catch (Exception ignored) {
+            jdbc.update("UPDATE usuarios SET activo = TRUE, email_verificado = TRUE, estado = 'ACTIVO', password_hash = ? WHERE LOWER(email) = LOWER(?)",
+                    encoder.encode("admin-clave-segura"), emailAdmin);
+        }
         String adminToken = token(emailAdmin, "admin-clave-segura");
 
-        JsonNode registro = json(mvc.perform(post("/api/auth/registro")
+        mvc.perform(post("/api/auth/registro")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"nombre":"Cliente","email":"%s","password":"clave-segura-1"}
-                                """.formatted(emailCliente)))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString());
-        String clienteToken = registro.path("token").asText();
-        String refreshToken = registro.path("refreshToken").asText();
-        assertThat(refreshToken).isNotBlank();
-        assertThat(registro.path("rol").asText()).isEqualTo("CLIENTE");
+                                {"primerNombre":"Cliente","primerApellido":"IT","nombre":"Cliente","telefono":"3001234567","email":"%s","emailConfirmacion":"%s","password":"clave-segura-1","captchaToken":"test","aceptaTerminos":true,"aceptaTratamientoDatos":true}
+                                """.formatted(emailCliente, emailCliente)))
+                .andExpect(status().isAccepted());
+        jdbc.update("UPDATE usuarios SET activo = TRUE, email_verificado = TRUE, estado = 'ACTIVO' WHERE LOWER(email) = LOWER(?)",
+                emailCliente);
+        String clienteToken = token(emailCliente, "clave-segura-1");
+        String refreshToken = json(mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + emailCliente + "\",\"password\":\"clave-segura-1\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString()).path("refreshToken").asText();
 
         // el refresh token rota y el logout invalida la sesión
         JsonNode refresco = json(mvc.perform(post("/api/auth/refresh")
@@ -276,7 +282,8 @@ class FlujoCompletoPostgresTest {
         }
         assertThat(enUmbral).isTrue();
 
-        assertThat(adminId).isPositive();
+        Long adminIdCheck = jdbc.queryForObject("SELECT id FROM usuarios WHERE LOWER(email) = LOWER(?)", Long.class, emailAdmin);
+        assertThat(adminIdCheck).isPositive();
     }
 
     /**
@@ -286,21 +293,26 @@ class FlujoCompletoPostgresTest {
      */
     @Test
     void pasarelaWebhookYFacturaFuncionanContraPostgres() throws Exception {
-        jdbc.queryForObject("""
-                INSERT INTO usuarios (nombre, email, password_hash, rol_id)
-                VALUES ('Admin Integracion', ?, ?, (SELECT id FROM roles WHERE nombre = 'ADMIN'))
-                RETURNING id
-                """, Long.class, emailAdmin, encoder.encode("admin-clave-segura"));
+        try {
+            jdbc.update("""
+                    INSERT INTO usuarios (nombre, email, password_hash, rol_id, activo, email_verificado, estado)
+                    VALUES ('Admin Integracion', ?, ?, (SELECT id FROM roles WHERE nombre = 'ADMIN'), TRUE, TRUE, 'ACTIVO')
+                    """, emailAdmin, encoder.encode("admin-clave-segura"));
+        } catch (Exception ignored) {
+            jdbc.update("UPDATE usuarios SET activo = TRUE, email_verificado = TRUE, estado = 'ACTIVO', password_hash = ? WHERE LOWER(email) = LOWER(?)",
+                    encoder.encode("admin-clave-segura"), emailAdmin);
+        }
         String adminToken = token(emailAdmin, "admin-clave-segura");
 
-        JsonNode registro = json(mvc.perform(post("/api/auth/registro")
+        mvc.perform(post("/api/auth/registro")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"nombre":"Cliente","email":"%s","password":"clave-segura-1"}
-                                """.formatted(emailCliente)))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString());
-        String clienteToken = registro.path("token").asText();
+                                {"primerNombre":"Cliente","primerApellido":"IT","nombre":"Cliente","telefono":"3001234567","email":"%s","emailConfirmacion":"%s","password":"clave-segura-1","captchaToken":"test","aceptaTerminos":true,"aceptaTratamientoDatos":true}
+                                """.formatted(emailCliente, emailCliente)))
+                .andExpect(status().isAccepted());
+        jdbc.update("UPDATE usuarios SET activo = TRUE, email_verificado = TRUE, estado = 'ACTIVO' WHERE LOWER(email) = LOWER(?)",
+                emailCliente);
+        String clienteToken = token(emailCliente, "clave-segura-1");
 
         JsonNode producto = json(mvc.perform(post("/api/admin/productos")
                         .header("Authorization", "Bearer " + adminToken)

@@ -1,17 +1,23 @@
 package com.codeconheiner.tienda.auth;
 
+import com.codeconheiner.tienda.auth.dto.ConfirmacionEmailRequest;
 import com.codeconheiner.tienda.auth.dto.LoginRequest;
 import com.codeconheiner.tienda.auth.dto.PasswordChangeRequest;
+import com.codeconheiner.tienda.auth.dto.ReenviarConfirmacionRequest;
 import com.codeconheiner.tienda.auth.dto.RefreshRequest;
+import com.codeconheiner.tienda.auth.dto.RegistroPendienteResponse;
 import com.codeconheiner.tienda.auth.dto.RegistroRequest;
 import com.codeconheiner.tienda.auth.dto.TokenResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -26,9 +32,28 @@ public class AuthController {
     }
 
     @PostMapping("/registro")
-    @ResponseStatus(HttpStatus.CREATED)
-    public TokenResponse registro(@Valid @RequestBody RegistroRequest request) {
-        return service.registrar(request);
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public RegistroPendienteResponse registro(@Valid @RequestBody RegistroRequest request,
+            HttpServletRequest httpRequest) {
+        return service.registrar(request, httpRequest);
+    }
+
+    @PostMapping("/confirmar-email")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void confirmarEmail(@Valid @RequestBody ConfirmacionEmailRequest request) {
+        service.confirmarEmail(request.token());
+    }
+
+    @GetMapping("/confirmar-email")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void confirmarEmailGet(@RequestParam("token") String token) {
+        service.confirmarEmail(token);
+    }
+
+    @PostMapping("/reenviar-confirmacion")
+    public RegistroPendienteResponse reenviarConfirmacion(@Valid @RequestBody ReenviarConfirmacionRequest request,
+            HttpServletRequest httpRequest) {
+        return service.reenviarConfirmacion(request.email(), httpRequest);
     }
 
     @PostMapping("/login")

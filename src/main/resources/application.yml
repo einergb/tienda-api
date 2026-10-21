@@ -57,10 +57,16 @@ tienda:
       private-key: ${WOMPI_PRIVATE_KEY:}
       # SHA-256(payload + integrity-secret) = cabecera X-Event-Checksum de los webhooks
       integrity-secret: ${WOMPI_INTEGRITY_SECRET:}
-      redirect-url: ${WOMPI_REDIRECT_URL:http://localhost:5173/pago/exitoso}
+      redirect-url: ${WOMPI_REDIRECT_URL:}
     epayco:
       api-url: ${EPAYCO_API_URL:https://api.secure.epayco.co}
       apify-url: ${EPAYCO_APIIFY_URL:https://apify.epayco.co}
       public-key: ${EPAYCO_PUBLIC_KEY:}
       private-key: ${EPAYCO_PRIVATE_KEY:}
+  captcha:
+    secreto: ${CAPTCHA_SECRETO:}
+    url: ${CAPTCHA_URL:https://www.google.com/recaptcha/api/siteverify}
+  mail:
+    from: ${MAIL_FROM:no-reply@tienda.local}
+    base-url: ${APP_BASE_URL:http://localhost:8080}
 

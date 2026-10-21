@@ -1,15 +1,25 @@
 package com.codeconheiner.tienda.catalogo;
 
+import com.codeconheiner.tienda.catalogo.storage.ImageStorage;
+import com.codeconheiner.tienda.common.ApiException;
 import jakarta.validation.Valid;
+import java.util.List;
+import java.util.Map;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 /** Gestion de productos: solo rol ADMIN (regla en SecurityConfig para /api/admin/**). */
 @RestController
@@ -17,9 +27,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminProductoController {
 
     private final ProductoService service;
+    private final ImageStorage imageStorage;
 
-    public AdminProductoController(ProductoService service) {
+    public AdminProductoController(ProductoService service, ImageStorage imageStorage) {
         this.service = service;
+        this.imageStorage = imageStorage;
     }
 
     @PostMapping
@@ -33,15 +45,55 @@ public class AdminProductoController {
         return service.actualizar(id, request);
     }
 
+    @GetMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    public List<ProductoResponse> listar() {
+        return service.listarTodos();
+    }
+
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void desactivar(@PathVariable long id) {
         service.desactivar(id);
     }
 
-    @PostMapping("/{id}/imagenes")
+    @PatchMapping("/{id}/activar")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ProductoResponse activar(@PathVariable long id) {
+        return service.reactivar(id);
+    }
+
+    @PostMapping(value = "/{id}/imagenes", consumes = MediaType.APPLICATION_JSON_VALUE)
     @ResponseStatus(HttpStatus.CREATED)
-    public ImagenProductoResponse agregarImagen(@PathVariable long id, @Valid @RequestBody ImagenRequest request) {
+    public ImagenProductoResponse agregarImagenJson(@PathVariable long id,
+            @Valid @RequestBody ImagenRequest request) {
+        Long imagenId = service.agregarImagen(id, request);
+        return new ImagenProductoResponse(imagenId, request.url(), request.orden() == null ? 0 : request.orden(),
+                Boolean.TRUE.equals(request.esPrincipal()));
+    }
+
+    @PostMapping(value = "/imagenes", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.CREATED)
+    public Map<String, String> subirImagen(@RequestParam(required = false) MultipartFile archivo,
+            @RequestParam(required = false) String imagenUrl) {
+        if (archivo != null && !archivo.isEmpty()) {
+            String url = imageStorage.upload(archivo);
+            return Map.of("imagenUrl", url);
+        }
+        if (imagenUrl != null && !imagenUrl.isBlank()) {
+            return Map.of("imagenUrl", imagenUrl);
+        }
+        throw new ApiException(HttpStatus.BAD_REQUEST, "Debes enviar 'archivo' o 'imagenUrl'");
+    }
+
+    @PostMapping(value = "/{id}/imagenes/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.CREATED)
+    public ImagenProductoResponse agregarImagenUpload(@PathVariable long id,
+            @RequestParam MultipartFile archivo,
+            @RequestParam(required = false) Integer orden,
+            @RequestParam(required = false) Boolean esPrincipal) {
+        String url = imageStorage.upload(archivo);
+        ImagenRequest request = new ImagenRequest(url, orden, esPrincipal);
         Long imagenId = service.agregarImagen(id, request);
         return new ImagenProductoResponse(imagenId, request.url(), request.orden() == null ? 0 : request.orden(),
                 Boolean.TRUE.equals(request.esPrincipal()));

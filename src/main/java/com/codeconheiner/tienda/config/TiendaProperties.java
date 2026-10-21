@@ -18,7 +18,9 @@ public record TiendaProperties(
         Admin admin,
         Cors cors,
         RateLimit rateLimit,
-        Pagos pagos) {
+        Pagos pagos,
+        Captcha captcha,
+        Mail mail) {
 
     public record Jwt(String secret, int expiracionMinutos) {}
 
@@ -49,5 +51,11 @@ public record TiendaProperties(
         public boolean simulado() {
             return modo == null || "simulado".equalsIgnoreCase(modo);
         }
+    }
+
+    public record Captcha(String secreto, String url) {
+    }
+
+    public record Mail(String from, String baseUrl) {
     }
 }

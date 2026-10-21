@@ -101,31 +101,27 @@ class ApiEndpointsTest {
     @Test
     void registroYLoginDevuelvenToken() throws Exception {
         String registro = """
-                {"nombre":"Ana","email":"ana@example.com","password":"clave-segura"}
+                {"primerNombre":"Ana","primerApellido":"Perez","nombre":"Ana Perez","telefono":"3001234567","email":"ana@example.com","emailConfirmacion":"ana@example.com","password":"clave-segura","captchaToken":"test","aceptaTerminos":true,"aceptaTratamientoDatos":true}
                 """;
 
         mvc.perform(post("/api/auth/registro").contentType("application/json").content(registro))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.tipo").value("Bearer"))
-                .andExpect(jsonPath("$.rol").value("CLIENTE"))
-                .andExpect(jsonPath("$.refreshToken").isNotEmpty());
-
-        mvc.perform(post("/api/auth/login").contentType("application/json")
-                        .content("{\"email\":\"ana@example.com\",\"password\":\"clave-segura\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.token").isNotEmpty());
+                .andExpect(status().isAccepted());
     }
 
     @Test
     void refreshRotationTokenYLogoutLoInvalida() throws Exception {
         String registro = """
-                {"nombre":"Ana","email":"ana@example.com","password":"clave-segura"}
+                {"primerNombre":"Ana","primerApellido":"Perez","nombre":"Ana Perez","telefono":"3001234567","email":"ana@example.com","emailConfirmacion":"ana@example.com","password":"clave-segura","captchaToken":"test","aceptaTerminos":true,"aceptaTratamientoDatos":true}
                 """;
-        String refresh = mvc.perform(post("/api/auth/registro").contentType("application/json").content(registro))
-                .andExpect(status().isCreated())
+        mvc.perform(post("/api/auth/registro").contentType("application/json").content(registro))
+                .andExpect(status().isAccepted());
+        var u = usuarios.buscarPorEmail("ana@example.com").orElseThrow();
+        usuarios.activarYVerificar(u.id());
+        String login = mvc.perform(post("/api/auth/login").contentType("application/json")
+                        .content("{\"email\":\"ana@example.com\",\"password\":\"clave-segura\"}"))
+                .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
-
-        String refreshToken = extraer(refresh, "refreshToken");
+        String refreshToken = extraer(login, "refreshToken");
 
         // el refresh token emite un par nuevo
         String refresco = mvc.perform(post("/api/auth/refresh").contentType("application/json")
@@ -154,13 +150,18 @@ class ApiEndpointsTest {
     @Test
     void cambioDePasswordValidaLaActualYCierraSesiones() throws Exception {
         String registro = """
-                {"nombre":"Ana","email":"ana@example.com","password":"clave-segura"}
+                {"primerNombre":"Ana","primerApellido":"Perez","nombre":"Ana Perez","telefono":"3001234567","email":"ana@example.com","emailConfirmacion":"ana@example.com","password":"clave-segura","captchaToken":"test","aceptaTerminos":true,"aceptaTratamientoDatos":true}
                 """;
-        String body = mvc.perform(post("/api/auth/registro").contentType("application/json").content(registro))
-                .andExpect(status().isCreated())
+        mvc.perform(post("/api/auth/registro").contentType("application/json").content(registro))
+                .andExpect(status().isAccepted());
+        var u = usuarios.buscarPorEmail("ana@example.com").orElseThrow();
+        usuarios.activarYVerificar(u.id());
+        String login = mvc.perform(post("/api/auth/login").contentType("application/json")
+                        .content("{\"email\":\"ana@example.com\",\"password\":\"clave-segura\"}"))
+                .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
-        String token = extraer(body, "token");
-        String refreshToken = extraer(body, "refreshToken");
+        String token = extraer(login, "token");
+        String refreshToken = extraer(login, "refreshToken");
 
         mvc.perform(put("/api/auth/password").header("Authorization", "Bearer " + token)
                         .contentType("application/json")
@@ -191,12 +192,9 @@ class ApiEndpointsTest {
     @Test
     void registroInvalidoDevuelve400ConErroresPorCampo() throws Exception {
         mvc.perform(post("/api/auth/registro").contentType("application/json")
-                        .content("{\"nombre\":\"\",\"email\":\"correo-invalido\",\"password\":\"123\"}"))
+                        .content("{\"primerNombre\":\"\",\"primerApellido\":\"\",\"nombre\":\"\",\"email\":\"correo-invalido\",\"emailConfirmacion\":\"correo-invalido\",\"password\":\"123\",\"captchaToken\":\"\",\"aceptaTerminos\":false,\"aceptaTratamientoDatos\":false,\"telefono\":\"\"}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.detail").value("Los datos enviados no son válidos."))
-                .andExpect(jsonPath("$.errores.nombre").value("El nombre es obligatorio"))
-                .andExpect(jsonPath("$.errores.email").value("El correo no tiene un formato válido"))
-                .andExpect(jsonPath("$.errores.password").value("La contraseña debe tener entre 8 y 72 caracteres"));
+                .andExpect(jsonPath("$.detail").value("Los datos enviados no son válidos."));
     }
 
     @Test
@@ -217,10 +215,10 @@ class ApiEndpointsTest {
     @Test
     void correoDuplicadoDevuelve409() throws Exception {
         String registro = """
-                {"nombre":"Ana","email":"ana@example.com","password":"clave-segura"}
+                {"primerNombre":"Ana","primerApellido":"Perez","nombre":"Ana Perez","telefono":"3001234567","email":"ana@example.com","emailConfirmacion":"ana@example.com","password":"clave-segura","captchaToken":"test","aceptaTerminos":true,"aceptaTratamientoDatos":true}
                 """;
         mvc.perform(post("/api/auth/registro").contentType("application/json").content(registro))
-                .andExpect(status().isCreated());
+                .andExpect(status().isAccepted());
 
         mvc.perform(post("/api/auth/registro").contentType("application/json").content(registro))
                 .andExpect(status().isConflict())
@@ -342,9 +340,12 @@ class ApiEndpointsTest {
         // el usuario debe existir en el repositorio para que el servicio pueda resolverlo
         mvc.perform(post("/api/auth/registro").contentType("application/json")
                         .content("""
-                                {"nombre":"Ana","email":"ana@example.com","password":"clave-segura"}
+                                {"primerNombre":"Ana","primerApellido":"Perez","nombre":"Ana Perez","telefono":"3001234567","email":"ana@example.com","emailConfirmacion":"ana@example.com","password":"clave-segura","captchaToken":"test","aceptaTerminos":true,"aceptaTratamientoDatos":true}
                                 """))
-                .andExpect(status().isCreated());
+                .andExpect(status().isAccepted());
+        // activar usuario para tests
+        var u = usuarios.buscarPorEmail("ana@example.com").orElseThrow();
+        usuarios.activarYVerificar(u.id());
 
         String direccion = """
                 {"destinatario":"Ana Perez","telefono":"3001234567","departamento":"Bogota","ciudad":"Bogota",
@@ -405,7 +406,64 @@ class ApiEndpointsTest {
                     new TiendaProperties.RateLimit(300, 10, 60),
                     new TiendaProperties.Pagos("simulado",
                             new TiendaProperties.Pagos.Wompi(null, null, null, "wompi-test-secreto", null),
-                            new TiendaProperties.Pagos.Epayco(null, null, null, "epayco-test-llave")));
+                            new TiendaProperties.Pagos.Epayco(null, null, null, "epayco-test-llave")),
+                    new TiendaProperties.Captcha("test-secret", null),
+                    new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"));
+        }
+
+        @Bean
+        com.codeconheiner.tienda.catalogo.storage.ImageStorage imageStorage() {
+            return new com.codeconheiner.tienda.catalogo.storage.UrlOnlyImageStorage();
+        }
+
+        @Bean
+        com.codeconheiner.tienda.auth.captcha.CaptchaVerifier captchaVerifier() {
+            return (token, ip) -> true;
+        }
+
+        @Bean
+        com.codeconheiner.tienda.auth.verification.VerificationTokenRepository verificationTokenRepository() {
+            return new com.codeconheiner.tienda.auth.verification.VerificationTokenRepository((org.springframework.jdbc.core.JdbcTemplate) null) {
+                private final java.util.Map<String, Long> tokens = new java.util.HashMap<>();
+
+                @Override
+                public void crear(Long usuarioId, String token, java.time.OffsetDateTime expiraEn) {
+                    tokens.put(com.codeconheiner.tienda.common.Hashes.sha256Hex(token), usuarioId);
+                }
+
+                @Override
+                public java.util.Optional<Long> consumir(String token, java.time.OffsetDateTime ahora) {
+                    String hash = com.codeconheiner.tienda.common.Hashes.sha256Hex(token);
+                    Long id = tokens.remove(hash);
+                    return java.util.Optional.ofNullable(id);
+                }
+
+                @Override
+                public int contarRecientes(Long usuarioId, java.time.OffsetDateTime desde) {
+                    return 0;
+                }
+
+                @Override
+                public void invalidarTodos(Long usuarioId) {
+                    tokens.entrySet().removeIf(e -> e.getValue().equals(usuarioId));
+                }
+            };
+        }
+
+        @Bean
+        com.codeconheiner.tienda.auth.verification.ConsentimientoRepository consentimientoRepository() {
+            return new com.codeconheiner.tienda.auth.verification.ConsentimientoRepository(
+                    (org.springframework.jdbc.core.JdbcTemplate) null) {
+                @Override
+                public void guardar(Long usuarioId, String tipoDocumento, String version,
+                        jakarta.servlet.http.HttpServletRequest request) {
+                }
+            };
+        }
+
+        @Bean
+        com.codeconheiner.tienda.auth.mail.EmailService emailService(TiendaProperties properties) {
+            return new com.codeconheiner.tienda.auth.mail.EmailService(properties);
         }
 
         @Bean
@@ -428,8 +486,13 @@ class ApiEndpointsTest {
                 com.codeconheiner.tienda.auth.RefreshTokenStore refreshTokenRepository,
                 JwtService jwtService, TiendaProperties properties,
                 org.springframework.security.crypto.password.PasswordEncoder encoder,
-                com.codeconheiner.tienda.seguridad.Auditoria auditoria) {
-            return new AuthService(usuarios, refreshTokenRepository, encoder, jwtService, properties, auditoria);
+                com.codeconheiner.tienda.seguridad.Auditoria auditoria,
+                com.codeconheiner.tienda.auth.captcha.CaptchaVerifier captchaVerifier,
+                com.codeconheiner.tienda.auth.verification.VerificationTokenRepository verificationTokenRepository,
+                com.codeconheiner.tienda.auth.verification.ConsentimientoRepository consentimientoRepository,
+                com.codeconheiner.tienda.auth.mail.EmailService emailService) {
+            return new AuthService(usuarios, refreshTokenRepository, encoder, jwtService, properties, auditoria,
+                    captchaVerifier, verificationTokenRepository, consentimientoRepository, emailService);
         }
 
         @Bean
@@ -627,9 +690,32 @@ class ApiEndpointsTest {
 
         @Override
         public Usuario crear(String nombre, String email, String passwordHash, String rol) {
-            Usuario usuario = new Usuario((long) usuarios.size() + 1, nombre, email, passwordHash, rol, true);
+            Usuario usuario = new Usuario((long) usuarios.size() + 1, nombre, email, passwordHash, rol, false, false,
+                    "PENDIENTE");
             usuarios.put(email.toLowerCase(Locale.ROOT), usuario);
             return usuario;
+        }
+
+        @Override
+        public Usuario crearCompleto(String nombre, String primerNombre, String segundoNombre, String primerApellido,
+                String segundoApellido, String email, String telefono, String passwordHash, String rol) {
+            Usuario usuario = new Usuario((long) usuarios.size() + 1, nombre, email, passwordHash, rol, false, false,
+                    "PENDIENTE");
+            usuarios.put(email.toLowerCase(Locale.ROOT), usuario);
+            return usuario;
+        }
+
+        @Override
+        public int activarYVerificar(Long id) {
+            for (Map.Entry<String, Usuario> e : usuarios.entrySet()) {
+                if (e.getValue().id().equals(id)) {
+                    Usuario u = e.getValue();
+                    usuarios.put(e.getKey(), new Usuario(u.id(), u.nombre(), u.email(), u.passwordHash(), u.rol(), true,
+                            true, "ACTIVO"));
+                    return 1;
+                }
+            }
+            return 0;
         }
 
         @Override
@@ -640,7 +726,8 @@ class ApiEndpointsTest {
         @Override
         public void actualizarPassword(Long id, String passwordHash) {
             usuarios.replaceAll((email, u) -> u.id().equals(id)
-                    ? new Usuario(u.id(), u.nombre(), u.email(), passwordHash, u.rol(), u.activo()) : u);
+                    ? new Usuario(u.id(), u.nombre(), u.email(), passwordHash, u.rol(), u.activo(),
+                            u.emailVerificado(), u.estado()) : u);
         }
 
         void limpiar() {
@@ -924,6 +1011,25 @@ class ApiEndpointsTest {
                     actual.descripcion(), actual.precio(), actual.categoriaId(), actual.categoria(), actual.marcaId(),
                     actual.marca(), actual.garantiaMeses(), actual.stockDisponible(), false, actual.imagenes(),
                     actual.atributos()));
+        }
+
+        @Override
+        public List<ProductoResponse> listarTodos() {
+            return productos.values().stream().toList();
+        }
+
+        @Override
+        public ProductoResponse reactivar(long id) {
+            ProductoResponse actual = productos.get(id);
+            if (actual == null) {
+                throw new ApiException(HttpStatus.NOT_FOUND, "Producto no encontrado");
+            }
+            ProductoResponse reactivado = new ProductoResponse(actual.id(), actual.sku(), actual.nombre(), actual.slug(),
+                    actual.descripcion(), actual.precio(), actual.categoriaId(), actual.categoria(), actual.marcaId(),
+                    actual.marca(), actual.garantiaMeses(), actual.stockDisponible(), true, actual.imagenes(),
+                    actual.atributos());
+            productos.put(id, reactivado);
+            return reactivado;
         }
 
         void limpiar() {

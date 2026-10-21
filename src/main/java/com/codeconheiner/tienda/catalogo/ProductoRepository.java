@@ -159,4 +159,12 @@ public class ProductoRepository {
     public int desactivar(long id) {
         return jdbc.update("UPDATE productos SET activo = FALSE, actualizado_en = now() WHERE id = ?", id);
     }
+
+    public List<ProductoResponse> findAll() {
+        return jdbc.query(BASE + " ORDER BY p.id DESC", MAPPER);
+    }
+
+    public int activar(long id) {
+        return jdbc.update("UPDATE productos SET activo = TRUE, actualizado_en = now() WHERE id = ?", id);
+    }
 }

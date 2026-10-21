@@ -27,7 +27,9 @@ class CarritoServiceTest {
             new TiendaProperties.Admin("admin@example.com", ""),
             new TiendaProperties.Cors(List.of("http://localhost:5173")),
             new TiendaProperties.RateLimit(300, 10, 60),
-            TiendaProperties.Pagos.simulados());
+            TiendaProperties.Pagos.simulados(),
+            new TiendaProperties.Captcha("test-secret", null),
+            new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"));
 
     private final FakeCarritoRepository repo = new FakeCarritoRepository();
     private final CarritoService service = new CarritoService(repo, props);

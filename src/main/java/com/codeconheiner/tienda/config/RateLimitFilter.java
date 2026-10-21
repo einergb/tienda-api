@@ -51,7 +51,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
             FilterChain chain) throws ServletException, IOException {
         RateLimiter limitador = esRutaAuth(request.getRequestURI()) ? auth : general;
-        if (!limitador.permitir(cliente(request))) {
+        if (!limitador.permitir(IpResolver.resolve(request))) {
             escribirLimite(response);
             return;
         }
@@ -67,15 +67,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         return false;
     }
 
-    /** Detrás de un proxy (nginx, homelab) la IP real viene en X-Forwarded-For. */
-    private static String cliente(HttpServletRequest request) {
-        String encadenada = request.getHeader("X-Forwarded-For");
-        if (encadenada != null && !encadenada.isBlank()) {
-            int coma = encadenada.indexOf(',');
-            return (coma > 0 ? encadenada.substring(0, coma) : encadenada).trim();
-        }
-        return request.getRemoteAddr();
-    }
+
 
     private void escribirLimite(HttpServletResponse response) throws IOException {
         response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());

@@ -47,13 +47,32 @@ public class ValidacionConfiguracion {
 
     /** En modo real la pasarela elegida necesita sus credenciales. */
     private void validarPagos() {
-        String modo = props.pagos().modo();
+        var pagos = props.pagos();
+        if (pagos == null) {
+            throw new IllegalStateException("Configuración de pagos no definida");
+        }
+        String modo = pagos.modo();
         if (modo == null || modo.isBlank()) {
             throw new IllegalStateException("tienda.pagos.modo debe ser 'simulado' o 'real'.");
         }
         String normalizado = modo.trim().toLowerCase(Locale.ROOT);
         if (!normalizado.equals("simulado") && !normalizado.equals("real")) {
             throw new IllegalStateException("tienda.pagos.modo debe ser 'simulado' o 'real', no '" + modo + "'.");
+        }
+        if (normalizado.equals("real")) {
+            var wompi = pagos.wompi();
+            if (wompi == null) {
+                throw new IllegalStateException("Configuración de Wompi no definida para pagos reales.");
+            }
+            requireNotBlank(wompi.privateKey(), "WOMPI_PRIVATE_KEY");
+            requireNotBlank(wompi.integritySecret(), "WOMPI_INTEGRITY_SECRET");
+            requireNotBlank(wompi.redirectUrl(), "WOMPI_REDIRECT_URL");
+        }
+    }
+
+    private static void requireNotBlank(String valor, String nombre) {
+        if (valor == null || valor.isBlank()) {
+            throw new IllegalStateException(nombre + " es obligatorio en modo real.");
         }
     }
 

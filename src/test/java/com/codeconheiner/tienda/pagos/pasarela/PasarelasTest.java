@@ -23,7 +23,9 @@ class PasarelasTest {
                 new TiendaProperties.RateLimit(300, 10, 60),
                 new TiendaProperties.Pagos("simulado",
                         new TiendaProperties.Pagos.Wompi(null, null, null, secretoWompi, null),
-                        new TiendaProperties.Pagos.Epayco(null, null, null, llaveEpayco)));
+                        new TiendaProperties.Pagos.Epayco(null, null, null, llaveEpayco)),
+                new TiendaProperties.Captcha("test-secret", null),
+                new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"));
     }
 
     @Test
