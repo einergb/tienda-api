@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -37,12 +38,14 @@ public class AdminProductoController {
     }
 
     @PostMapping
+    @CacheEvict(cacheNames = {"catalogo-listado", "categorias", "producto"}, allEntries = true)
     @ResponseStatus(HttpStatus.CREATED)
     public ProductoResponse crear(@Valid @RequestBody ProductoRequest request) {
         return service.crear(request);
     }
 
     @PutMapping("/{id}")
+    @CacheEvict(cacheNames = {"catalogo-listado", "producto"}, allEntries = true, key = "#id")
     public ProductoResponse actualizar(@PathVariable long id, @Valid @RequestBody ProductoRequest request) {
         return service.actualizar(id, request);
     }
@@ -54,6 +57,7 @@ public class AdminProductoController {
     }
 
     @DeleteMapping("/{id}")
+    @CacheEvict(cacheNames = {"catalogo-listado", "producto"}, allEntries = true)
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void desactivar(@PathVariable long id) {
         service.desactivar(id);
@@ -61,12 +65,14 @@ public class AdminProductoController {
 
     @PatchMapping("/{id}/activar")
     @PreAuthorize("hasRole('ADMIN')")
+    @CacheEvict(cacheNames = {"catalogo-listado", "producto"}, allEntries = true)
     public ProductoResponse activar(@PathVariable long id) {
         return service.reactivar(id);
     }
 
     @PostMapping(value = "/{id}/imagenes", consumes = MediaType.APPLICATION_JSON_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
+    @CacheEvict(cacheNames = {"catalogo-listado", "producto"}, allEntries = true)
     @ResponseStatus(HttpStatus.CREATED)
     public ImagenProductoResponse agregarImagenJson(@PathVariable long id,
             @Valid @RequestBody ImagenRequest request) {
@@ -77,6 +83,7 @@ public class AdminProductoController {
 
     @PostMapping(value = "/imagenes", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
+    @CacheEvict(cacheNames = {"catalogo-listado", "producto"}, allEntries = true)
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, String> subirImagen(@RequestParam(required = false) MultipartFile archivo,
             @RequestParam(required = false) String imagenUrl) {
@@ -103,6 +110,7 @@ public class AdminProductoController {
 
     @PostMapping(value = "/{id}/imagenes/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
+    @CacheEvict(cacheNames = {"catalogo-listado", "producto"}, allEntries = true)
     @ResponseStatus(HttpStatus.CREATED)
     public ImagenProductoResponse agregarImagenUpload(@PathVariable long id,
             @RequestParam MultipartFile archivo,
@@ -117,12 +125,14 @@ public class AdminProductoController {
 
     @DeleteMapping("/{id}/imagenes/{imagenId}")
     @PreAuthorize("hasRole('ADMIN')")
+    @CacheEvict(cacheNames = {"catalogo-listado", "producto"}, allEntries = true)
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void eliminarImagen(@PathVariable long id, @PathVariable long imagenId) {
         service.eliminarImagenGaleria(id, imagenId);
     }
 
     @PostMapping("/{id}/atributos")
+    @CacheEvict(cacheNames = {"catalogo-listado", "producto"}, allEntries = true)
     @ResponseStatus(HttpStatus.CREATED)
     public AtributoRequest agregarAtributo(@PathVariable long id, @Valid @RequestBody AtributoRequest request) {
         service.agregarAtributo(id, request);
@@ -130,6 +140,7 @@ public class AdminProductoController {
     }
 
     @DeleteMapping("/{id}/atributos/{clave}")
+    @CacheEvict(cacheNames = {"catalogo-listado", "producto"}, allEntries = true)
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void eliminarAtributo(@PathVariable long id, @PathVariable String clave) {
         service.eliminarAtributo(id, clave);
@@ -141,6 +152,7 @@ public class AdminProductoController {
      */
     @PostMapping(value = "/{id}/imagen", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
+    @CacheEvict(cacheNames = {"catalogo-listado", "producto"}, allEntries = true)
     @ResponseStatus(HttpStatus.CREATED)
     public ProductoResponse subirImagenProducto(@PathVariable long id, @RequestParam("file") MultipartFile file) {
         return service.subirImagen(id, file);
@@ -149,6 +161,7 @@ public class AdminProductoController {
     /** Borra el objeto del almacenamiento y deja imagen_key en null. */
     @DeleteMapping("/{id}/imagen")
     @PreAuthorize("hasRole('ADMIN')")
+    @CacheEvict(cacheNames = {"catalogo-listado", "producto"}, allEntries = true)
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void eliminarImagenProducto(@PathVariable long id) {
         service.eliminarImagen(id);

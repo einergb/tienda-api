@@ -241,6 +241,12 @@ No publiques `.env` ni compartas sus valores. `ADMIN_PASSWORD` es opcional: al i
 | `ADMIN_PASSWORD` | Vacío | Si se define, permite crear el administrador inicial si no existe. |
 | `CORS_ORIGINS` | `http://localhost:5173` | Orígenes CORS permitidos. |
 | `TIENDA_NOMBRE` | `TechStore` | Nombre público de la tienda. |
+| `CACHE_TYPE` | `none` | `none` (sin Redis, desarrollo) o `redis` (producción). |
+| `CACHE_TTL_PRODUCTOS` | `5m` | TTL para detalle de producto. |
+| `CACHE_TTL_LISTADOS` | `60s` | TTL para listado de catálogo. |
+| `CACHE_TTL_CATEGORIAS` | `1h` | TTL para categorías. |
+| `CACHE_TTL_TIENDA` | `1h` | TTL para datos de tienda. |
+| `REDIS_HOST/PORT/PASSWORD` | `localhost/6379/` | Conexión Redis cuando `CACHE_TYPE=redis`. |
 | `RATE_LIMIT_MAXIMO` | `300` | Solicitudes generales por IP y ventana. |
 | `RATE_LIMIT_AUTH_MAXIMO` | `10` | Solicitudes de login, registro y refresh por IP y ventana. |
 | `PAGOS_MODO` | `simulado` | `simulado` o `real`. El modo real utiliza las URLs configuradas. |

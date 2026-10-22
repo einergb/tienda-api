@@ -21,7 +21,8 @@ public record TiendaProperties(
         Pagos pagos,
         Captcha captcha,
         Mail mail,
-        Storage storage) {
+        Storage storage,
+        CacheConfigProperties cache) {
 
     public record Jwt(String secret, int expiracionMinutos) {}
 
@@ -62,5 +63,9 @@ public record TiendaProperties(
 
     public record Storage(String endpoint, String accessKey, String secretKey, String bucket,
             String publicBaseUrl, Boolean publicUrlIncluyeBucket) {
+    }
+
+    public record CacheConfigProperties(String ttlProductos, String ttlListados, String ttlCategorias,
+            String ttlTienda) {
     }
 }

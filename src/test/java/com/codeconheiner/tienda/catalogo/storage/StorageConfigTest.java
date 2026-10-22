@@ -40,6 +40,7 @@ class StorageConfigTest {
                 new TiendaProperties.Captcha("test-secret", null),
                 new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"),
                 new TiendaProperties.Storage("http://localhost:9000", accessKey, secretKey, "bucket",
-                        "http://localhost:9000", Boolean.TRUE));
+                        "http://localhost:9000", Boolean.TRUE),
+                new TiendaProperties.CacheConfigProperties("5m", "60s", "1h", "1h"));
     }
 }
