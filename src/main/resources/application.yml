@@ -11,6 +11,7 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
+      connect-timeout: 2s
       timeout: 2s
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/tienda}
@@ -37,6 +38,9 @@ management:
     health:
       probes:
         enabled: true
+  health:
+    redis:
+      enabled: false
 
 # Valores configurables de la tienda
 tienda:
@@ -89,8 +93,8 @@ tienda:
     public-base-url: ${STORAGE_PUBLIC_URL:http://192.168.0.150:9000}
     public-url-incluye-bucket: ${STORAGE_PUBLIC_URL_INCLUYE_BUCKET:true}
   cache:
-    ttl-productos: ${CACHE_TTL_PRODUCTOS:5m}
-    ttl-listados: ${CACHE_TTL_LISTADOS:60s}
+    ttl-productos: ${CACHE_TTL_PRODUCTOS:60s}
+    ttl-listados: ${CACHE_TTL_LISTADOS:30s}
     ttl-categorias: ${CACHE_TTL_CATEGORIAS:1h}
     ttl-tienda: ${CACHE_TTL_TIENDA:1h}
 

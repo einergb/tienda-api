@@ -2,7 +2,7 @@
 
 API REST para una tienda de comercio electrónico, construida con Spring Boot, Java y PostgreSQL. Incluye autenticación JWT, catálogo, carrito, pedidos, pagos, inventario, facturación y administración.
 
-> **Estado de Redis y MinIO:** todavía no están integrados. El rate limiting y las imágenes utilizan las soluciones actuales descritas en [Siguiente etapa: Redis y MinIO](#siguiente-etapa-redis-y-minio).
+> **Estado de Redis y MinIO:** Redis se usa para la caché opcional del catálogo (`CACHE_TYPE=redis`); el rate limiting sigue en memoria. El almacenamiento de imágenes sigue la configuración existente.
 
 ## Contenido
 
@@ -242,8 +242,8 @@ No publiques `.env` ni compartas sus valores. `ADMIN_PASSWORD` es opcional: al i
 | `CORS_ORIGINS` | `http://localhost:5173` | Orígenes CORS permitidos. |
 | `TIENDA_NOMBRE` | `TechStore` | Nombre público de la tienda. |
 | `CACHE_TYPE` | `none` | `none` (sin Redis, desarrollo) o `redis` (producción). |
-| `CACHE_TTL_PRODUCTOS` | `5m` | TTL para detalle de producto. |
-| `CACHE_TTL_LISTADOS` | `60s` | TTL para listado de catálogo. |
+| `CACHE_TTL_PRODUCTOS` | `60s` | TTL para detalle de producto. |
+| `CACHE_TTL_LISTADOS` | `30s` | TTL para listado de catálogo. |
 | `CACHE_TTL_CATEGORIAS` | `1h` | TTL para categorías. |
 | `CACHE_TTL_TIENDA` | `1h` | TTL para datos de tienda. |
 | `REDIS_HOST/PORT/PASSWORD` | `localhost/6379/` | Conexión Redis cuando `CACHE_TYPE=redis`. |
@@ -449,20 +449,16 @@ Las pruebas `RepositoriosPostgresTest` y `FlujoCompletoPostgresTest` limpian sus
 - Las imágenes son URLs guardadas en PostgreSQL; no hay carga de archivos ni almacenamiento MinIO.
 - Los productos se desactivan de forma lógica. No existe todavía una ruta de API para reactivarlos.
 - Las reglas críticas de negocio también se aplican en PostgreSQL; los errores SQLSTATE `P0001` se convierten en HTTP `422`.
+- La caché Redis aplica solo a lecturas públicas de catálogo. Si Redis falla, la API continúa consultando PostgreSQL; el health de Redis está excluido de `/actuator/health` y sus probes.
+- Stock y reservas se invalidan después de las operaciones Java de checkout, estados de pedido, aprobación de pagos, devolución de envío y expiración de reservas. Escrituras directas en PostgreSQL u otros clientes que disparen los triggers no notifican a esta instancia; los TTL predeterminados son 60 s para detalles y 30 s para listados para acotar esa posible obsolescencia.
 
 ## Siguiente etapa: Redis y MinIO
 
-Esta integración está **pendiente** y no debe considerarse disponible en el despliegue actual. No hay dependencias, servicios Compose, configuración ni código cliente de Redis o MinIO en esta versión.
+La caché Redis está disponible de forma opcional (`CACHE_TYPE=redis`), mientras que el rate limiting permanece en memoria. El almacenamiento de imágenes utiliza la configuración existente.
 
 ### Redis para caché
 
-Objetivo: reducir lecturas repetidas del catálogo y compartir estado entre instancias cuando sea necesario. La integración deberá definir:
-
-- Qué respuestas se cachean, por ejemplo categorías y catálogo público.
-- TTL por tipo de dato y estrategia de invalidación al crear, editar o desactivar productos.
-- Serialización de respuestas y manejo de fallos de Redis sin interrumpir la API.
-- Configuración por variables de entorno y pruebas que validen expiración e invalidación.
-- Evaluar si el rate limiter también debe pasar a Redis para aplicar límites compartidos entre réplicas; eso es distinto del caché de catálogo.
+La caché cubre tienda, categorías, listado y detalle público. El TTL es configurable por entorno; cambios de catálogo hechos desde la API invalidan las entradas afectadas. PostgreSQL no publica invalidaciones para escrituras externas, por lo que deben considerarse los TTL de respaldo documentados en Seguridad y limitaciones. Una caída de Redis no desactiva la API ni cambia el estado de health.
 
 ### MinIO para imágenes
 

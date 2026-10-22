@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.sql.SQLException;
 import java.util.Map;
 import java.util.Objects;
@@ -50,6 +51,11 @@ class PostgresIntegrationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
+        registry.add("spring.cache.type", () -> "redis");
+        registry.add("spring.data.redis.host", () -> "127.0.0.1");
+        registry.add("spring.data.redis.port", () -> 1);
+        registry.add("spring.data.redis.connect-timeout", () -> "2s");
+        registry.add("spring.data.redis.timeout", () -> "2s");
         registry.add("tienda.jwt.secret", () -> JWT_SECRET);
         registry.add("tienda.admin.email", () -> ADMIN_EMAIL);
         registry.add("tienda.admin.password", () -> ADMIN_PASSWORD);
@@ -153,6 +159,21 @@ class PostgresIntegrationTest {
         assertThat(body(productoInvalido).path("errores").path("precio").asText())
                 .isEqualTo("El precio debe ser mayor o igual a 0");
     }
+
+        @Test
+        void redisInaccesibleNoAfectaCatalogoNiHealth() {
+                long inicio = System.nanoTime();
+                ResponseEntity<JsonNode> listado = get("/api/catalogo/productos");
+                long duracionMs = Duration.ofNanos(System.nanoTime() - inicio).toMillis();
+
+                assertThat(listado.getStatusCode()).isEqualTo(HttpStatus.OK);
+                assertThat(duracionMs).isLessThan(3000);
+
+                ResponseEntity<JsonNode> health = get("/actuator/health");
+                assertThat(health.getStatusCode()).isEqualTo(HttpStatus.OK);
+                assertThat(body(health).path("status").asText()).isEqualTo("UP");
+                assertThat(body(health).path("components").has("redis")).isFalse();
+        }
 
     @Test
     void adminPuedeCrearActualizarYDesactivarProductoEnPostgres() throws Exception {
