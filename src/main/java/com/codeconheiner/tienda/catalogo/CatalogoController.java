@@ -45,10 +45,10 @@ public class CatalogoController {
     /**
      * Listado publico del catalogo.
      *
-     * <p>La clave incluye todos los parametros que cambian el resultado (categoria, texto de
-     * busqueda, pagina y tamaño). El listado NO se cachea cuando hay busqueda por texto libre
-     * ({@code unless}): de lo contrario cada texto buscado crearia una entrada y las entradas
-     * serian ilimitadas.
+    * <p>Los unicos {@code @RequestParam} son {@code categoriaId}, {@code q}, {@code page} y
+    * {@code size}; la consulta fija el orden por id descendente y no expone un parametro de
+    * ordenacion. La clave incluye categoria, pagina y tamaño; {@code q} no se cachea cuando
+    * contiene texto libre ({@code unless}) para evitar entradas ilimitadas.
      */
     @Cacheable(value = "catalogo-listado",
             key = "T(com.codeconheiner.tienda.catalogo.CatalogoController).claveListado(#categoriaId, #q, #page, #size)",
