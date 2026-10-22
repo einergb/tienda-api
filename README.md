@@ -2,7 +2,7 @@
 
 API REST para una tienda de comercio electrónico, construida con Spring Boot, Java y PostgreSQL. Incluye autenticación JWT, catálogo, carrito, pedidos, pagos, inventario, facturación y administración.
 
-> **Estado de Redis y MinIO:** Redis se usa para la caché opcional del catálogo (`CACHE_TYPE=redis`); el rate limiting sigue en memoria. El almacenamiento de imágenes sigue la configuración existente.
+> **Infraestructura:** Redis proporciona caché opcional del catálogo y RustFS almacena imágenes mediante la API compatible con AWS S3. Ambos servicios son externos: `docker-compose.yml` despliega solo la API.
 
 ## Contenido
 
@@ -19,7 +19,7 @@ API REST para una tienda de comercio electrónico, construida con Spring Boot, J
 - [Base de datos](#base-de-datos)
 - [Pruebas](#pruebas)
 - [Seguridad y limitaciones](#seguridad-y-limitaciones)
-- [Siguiente etapa: Redis y MinIO](#siguiente-etapa-redis-y-minio)
+- [Redis y almacenamiento S3-compatible](#redis-y-almacenamiento-s3-compatible)
 - [Solución de problemas](#solución-de-problemas)
 
 ## Tecnologías
@@ -36,7 +36,7 @@ API REST para una tienda de comercio electrónico, construida con Spring Boot, J
 
 - Registro, login, JWT y refresh tokens rotativos con revocación de sesiones.
 - Catálogo público con categorías, búsqueda, paginación y productos con stock.
-- Administración de productos, imágenes por URL y atributos.
+- Administración de productos, carga de imágenes a RustFS (S3-compatible), galería y atributos.
 - Carrito, direcciones, cupones y checkout transaccional.
 - Reserva y expiración automática de stock; reglas de negocio protegidas por triggers de PostgreSQL.
 - Pedidos, pagos, estados, envíos, reseñas verificadas y facturas idempotentes.
@@ -247,6 +247,12 @@ No publiques `.env` ni compartas sus valores. `ADMIN_PASSWORD` es opcional: al i
 | `CACHE_TTL_CATEGORIAS` | `1h` | TTL para categorías. |
 | `CACHE_TTL_TIENDA` | `1h` | TTL para datos de tienda. |
 | `REDIS_HOST/PORT/PASSWORD` | `localhost/6379/` | Conexión Redis cuando `CACHE_TYPE=redis`. |
+| `STORAGE_ENDPOINT` | `http://192.168.0.150:9000` | Endpoint de la API S3 de RustFS, accesible desde la API. |
+| `STORAGE_ACCESS_KEY` | Vacía | Access key del usuario de RustFS con permisos sobre el bucket. |
+| `STORAGE_SECRET_KEY` | Vacía | Secret key del usuario de RustFS. |
+| `STORAGE_BUCKET` | `tienda-productos-dev` | Bucket de objetos; debe existir y ser accesible con esas credenciales. Compose usa `tienda-productos` si no se configura. |
+| `STORAGE_PUBLIC_URL` | `http://192.168.0.150:9000` | Base URL que pueden alcanzar los navegadores para descargar imágenes; puede ser un proxy/CDN distinto del endpoint S3. |
+| `STORAGE_PUBLIC_URL_INCLUYE_BUCKET` | `true` | Si es `true`, la URL pública se construye como `{base}/{bucket}/{clave}`; si es `false`, como `{base}/{clave}`. |
 | `RATE_LIMIT_MAXIMO` | `300` | Solicitudes generales por IP y ventana. |
 | `RATE_LIMIT_AUTH_MAXIMO` | `10` | Solicitudes de login, registro y refresh por IP y ventana. |
 | `PAGOS_MODO` | `simulado` | `simulado` o `real`. El modo real utiliza las URLs configuradas. |
@@ -278,12 +284,13 @@ mvn -B -q package -DskipTests
 
 ## Despliegue con Docker
 
-El Compose de este repositorio levanta la API, no PostgreSQL. En la configuración actual, la API se conecta al servicio `web_db` por el puerto interno `5432` y a la red Docker externa `homelab_net`.
+El Compose de este repositorio levanta la API, no PostgreSQL, Redis ni RustFS. La API se conecta a `web_db:5432` y a la red Docker externa `homelab_net`; configura `REDIS_HOST` y `STORAGE_ENDPOINT` con nombres/IP alcanzables desde esa red. `STORAGE_ENDPOINT` apunta a la API S3 de RustFS, mientras `STORAGE_PUBLIC_URL` debe ser accesible desde los clientes web. Redis y RustFS deben estar desplegados por separado.
 
-1. Verifica que `web_db` esté activo y conectado a `homelab_net`.
-2. Crea `.env` a partir de `.env.example` y configura los datos de la base `web`, `JWT_SECRET` y las credenciales necesarias.
-3. Asegúrate de que la dirección `192.168.0.150` de `ports` en `docker-compose.yml` corresponda al host. Cámbiala si el servidor usa otra IP.
-4. Desde la carpeta del proyecto ejecuta:
+1. Verifica que `web_db`, Redis y RustFS estén activos y conectados a `homelab_net`.
+2. Crea `.env` a partir de `.env.example`; configura los datos de PostgreSQL, `JWT_SECRET`, `REDIS_HOST` y las variables `STORAGE_*`. No reutilices credenciales de ejemplo.
+3. Crea previamente en RustFS el bucket indicado por `STORAGE_BUCKET` y concede a las claves configuradas permisos para leer, subir y borrar objetos en ese bucket.
+4. Asegúrate de que la dirección `192.168.0.150` de `ports` en `docker-compose.yml` corresponda al host. Cámbiala si el servidor usa otra IP.
+5. Desde la carpeta del proyecto ejecuta:
 
 ```bash
 docker compose up -d --build
@@ -298,7 +305,7 @@ URLs con la configuración actual:
 - OpenAPI: `http://192.168.0.150:8080/v3/api-docs`
 - Salud: `http://192.168.0.150:8080/actuator/health`
 
-Dentro de la red Docker se usa `web_db:5432`; el puerto publicado de PostgreSQL en el host no es el puerto que deben usar los contenedores entre sí. La red externa se declara en `docker-compose.yml` y debe existir antes de levantar la API.
+Dentro de Docker se usa `web_db:5432`; el puerto publicado de PostgreSQL en el host no es el puerto entre contenedores. La red externa se declara en `docker-compose.yml` y debe existir antes de levantar la API. El Compose no crea el bucket ni los servicios Redis/RustFS.
 
 ## API
 
@@ -369,7 +376,7 @@ Para administrar productos, usa `Authorization: Bearer <token>`. La cuenta debe 
 - **Imagen principal**: `productos.imagen_key` es la fuente de verdad. `POST /api/admin/productos/{id}/imagen` sube con `StorageService`, actualiza la clave, sincroniza `producto_imagenes` (pone otras como no principales, reemplaza fila de la principal anterior, inserta nueva con `es_principal=true`, `orden=0`) y borra el objeto anterior (best effort).
 - **Galería**: `POST /api/admin/productos/{id}/imagenes/upload` sube archivo con `StorageService`. `POST /api/admin/productos/{id}/imagenes` acepta JSON con `url`. `POST /api/admin/productos/imagenes` sube archivo con prefijo `productos/sin-asignar` o acepta `imagenUrl` http/https válida.
 - **Eliminación**: `DELETE /api/admin/productos/{id}/imagen` borra objeto y limpia galería/clave. `DELETE /api/admin/productos/{id}/imagenes/{imagenId}` borra la fila; si la URL es propia (`STORAGE_PUBLIC_URL`) intenta borrar el objeto S3 (best effort).
-- **Almacenamiento**: S3-compatible (RustFS). Las claves se generan con UUID, nunca con el nombre original. `Cache-Control: public, max-age=31536000, immutable`. Al borrar un objeto el CDN puede seguir sirviéndolo hasta expirar o purgarse. `STORAGE_PUBLIC_URL_INCLUYE_BUCKET` controla si la URL pública incluye el bucket.
+- **Almacenamiento**: RustFS implementa la API compatible con AWS S3; la aplicación usa el SDK de AWS con endpoint override y acceso path-style (`/{bucket}/{clave}`). El bucket se configura con `STORAGE_BUCKET` y debe existir antes de subir. Las claves se generan con UUID, nunca con el nombre original. Los objetos se sirven con `Cache-Control: public, max-age=31536000, immutable`; al borrar uno, un CDN o caché intermedia podría conservarlo hasta que expire o se purgue. `STORAGE_PUBLIC_URL_INCLUYE_BUCKET` controla si la URL pública incluye el bucket.
 - **Nota**: puede existir una fila de galería con placeholder tipo `https://<HOST_DE_IMAGENES>/...` (producto 1 en producción). No se borra automáticamente por código/migración; requiere limpieza manual.
 
 El catálogo público solo muestra productos activos con stock disponible. El `PUT` actualiza los datos e inventario, pero no reactiva productos; actualmente la API no expone un endpoint de reactivación.
@@ -446,33 +453,24 @@ Las pruebas `RepositoriosPostgresTest` y `FlujoCompletoPostgresTest` limpian sus
 - Configura secretos únicos y robustos; no incluyas `.env`, JWT, contraseñas ni claves de pasarela en Git o en logs compartidos.
 - El administrador inicial se crea solo si no existe. Cambiar `ADMIN_PASSWORD` no modifica una cuenta previamente creada.
 - El rate limiter usa una ventana deslizante en memoria por instancia; no comparte contadores entre réplicas y no está respaldado por Redis.
-- Las imágenes son URLs guardadas en PostgreSQL; no hay carga de archivos ni almacenamiento MinIO.
+- Las imágenes principales guardan en PostgreSQL la clave del objeto S3, no sus bytes. Las cargas de producto y galería se validan y almacenan en RustFS. La galería también permite URLs externas.
 - Los productos se desactivan de forma lógica. No existe todavía una ruta de API para reactivarlos.
 - Las reglas críticas de negocio también se aplican en PostgreSQL; los errores SQLSTATE `P0001` se convierten en HTTP `422`.
 - La caché Redis aplica solo a lecturas públicas de catálogo. Si Redis falla, la API continúa consultando PostgreSQL; el health de Redis está excluido de `/actuator/health` y sus probes.
 - Stock y reservas se invalidan después de las operaciones Java de checkout, estados de pedido, aprobación de pagos, devolución de envío y expiración de reservas. Escrituras directas en PostgreSQL u otros clientes que disparen los triggers no notifican a esta instancia; los TTL predeterminados son 60 s para detalles y 30 s para listados para acotar esa posible obsolescencia.
 - Las categorías solo tienen lectura pública, sin rutas administrativas de creación o activación. `ProductoResponse` no incluye promedio ni conteo de reseñas; esos cambios no requieren invalidar el detalle.
 
-## Siguiente etapa: Redis y MinIO
+## Redis y almacenamiento S3-compatible
 
-La caché Redis está disponible de forma opcional (`CACHE_TYPE=redis`), mientras que el rate limiting permanece en memoria. El almacenamiento de imágenes utiliza la configuración existente.
+Redis se usa opcionalmente para la caché del catálogo (`CACHE_TYPE=redis`). El almacenamiento de imágenes utiliza RustFS mediante el protocolo S3 de AWS; no se requiere MinIO, aunque otro servicio compatible puede configurarse cambiando el endpoint y las credenciales. Estos servicios no se levantan desde el Compose de la API.
 
 ### Redis para caché
 
-La caché cubre tienda, categorías, listado y detalle público. El TTL es configurable por entorno; cambios de catálogo hechos desde la API invalidan las entradas afectadas. PostgreSQL no publica invalidaciones para escrituras externas, por lo que deben considerarse los TTL de respaldo documentados en Seguridad y limitaciones. Una caída de Redis no desactiva la API ni cambia el estado de health.
+La caché cubre tienda, categorías, listado y detalle público. El TTL es configurable por entorno; cambios de catálogo hechos desde la API invalidan las entradas afectadas. PostgreSQL no publica invalidaciones para escrituras externas, por lo que deben considerarse los TTL de respaldo documentados en Seguridad y limitaciones. Una caída de Redis no desactiva la API ni cambia el estado de health. La conexión usa timeouts de 2 segundos y Redis se excluye del health de Actuator.
 
-### MinIO para imágenes
+### RustFS y buckets
 
-Objetivo: recibir archivos de imagen y almacenarlos como objetos, en vez de guardar URLs suministradas manualmente. La integración deberá contemplar:
-
-- Cliente MinIO y configuración externa de endpoint, bucket y credenciales.
-- Endpoint administrativo de carga multipart, límites de tamaño y validación de tipo/contenido.
-- Persistencia en PostgreSQL de la clave del objeto y sus metadatos, no de los bytes del archivo.
-- Entrega de URL pública o firmada según la política de acceso definida.
-- Eliminación coordinada del objeto y su referencia al borrar una imagen.
-- Pruebas de carga, consulta, permisos y errores de almacenamiento.
-
-Redis y MinIO deberán quedar configurables por entorno, con credenciales fuera del repositorio. La implementación debe preservar el comportamiento actual hasta que la migración de clientes y despliegue esté lista.
+Configura `STORAGE_ENDPOINT` con la URL interna de la API S3 de RustFS y `STORAGE_PUBLIC_URL` con la dirección pública desde la que el navegador obtendrá las imágenes. Pueden ser distintas cuando hay proxy inverso o CDN. Configura `STORAGE_BUCKET` con un bucket ya creado y credenciales con permisos limitados a ese bucket. La API no crea buckets ni expone las claves de acceso. Las cargas admiten JPEG, PNG y WebP de hasta 5 MiB; las claves usan UUID y prefijos como `productos/{id}/`.
 
 ## Solución de problemas
 
