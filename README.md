@@ -451,6 +451,7 @@ Las pruebas `RepositoriosPostgresTest` y `FlujoCompletoPostgresTest` limpian sus
 - Las reglas críticas de negocio también se aplican en PostgreSQL; los errores SQLSTATE `P0001` se convierten en HTTP `422`.
 - La caché Redis aplica solo a lecturas públicas de catálogo. Si Redis falla, la API continúa consultando PostgreSQL; el health de Redis está excluido de `/actuator/health` y sus probes.
 - Stock y reservas se invalidan después de las operaciones Java de checkout, estados de pedido, aprobación de pagos, devolución de envío y expiración de reservas. Escrituras directas en PostgreSQL u otros clientes que disparen los triggers no notifican a esta instancia; los TTL predeterminados son 60 s para detalles y 30 s para listados para acotar esa posible obsolescencia.
+- Las categorías solo tienen lectura pública, sin rutas administrativas de creación o activación. `ProductoResponse` no incluye promedio ni conteo de reseñas; esos cambios no requieren invalidar el detalle.
 
 ## Siguiente etapa: Redis y MinIO
 
