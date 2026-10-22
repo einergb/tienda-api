@@ -127,6 +127,9 @@ class RepositoriosPostgresTest {
     private Auditoria auditoria;
 
     @Autowired
+    private com.codeconheiner.tienda.catalogo.ProductoRepository productoRepo;
+
+    @Autowired
     private TareasSeguridad tareaExpiracion;
 
     private final List<Long> cuponesCreados = new ArrayList<>();
@@ -221,6 +224,23 @@ class RepositoriosPostgresTest {
     @Test
     void inventarioRepositoryDevuelveVacioParaProductoInexistente() {
         assertThat(inventarioRepo.obtenerStock(99999999L)).isEmpty();
+    }
+
+    @Test
+    void productoRepositoryGuardaYDevuelveLaClaveDeImagen() {
+        long productoId = crearProductoUnico(3, 1);
+
+        assertThat(productoRepo.obtenerImagenKey(productoId)).isNull();
+
+        assertThat(productoRepo.actualizarImagenKey(productoId, "productos/" + productoId + "/abc.png"))
+                .isEqualTo(1);
+        assertThat(productoRepo.obtenerImagenKey(productoId)).isEqualTo("productos/" + productoId + "/abc.png");
+        assertThat(productoRepo.buscarPorId(productoId).orElseThrow().imagenKey())
+                .isEqualTo("productos/" + productoId + "/abc.png");
+
+        // quitar la imagen deja la columna en null
+        productoRepo.actualizarImagenKey(productoId, null);
+        assertThat(productoRepo.obtenerImagenKey(productoId)).isNull();
     }
 
     @Test

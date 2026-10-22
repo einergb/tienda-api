@@ -25,7 +25,8 @@ class PasarelasTest {
                         new TiendaProperties.Pagos.Wompi(null, null, null, secretoWompi, null),
                         new TiendaProperties.Pagos.Epayco(null, null, null, llaveEpayco)),
                 new TiendaProperties.Captcha("test-secret", null),
-                new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"));
+                new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"),
+                new TiendaProperties.Storage("http://localhost:9000", "key", "secret", "bucket", "http://localhost:9000"));
     }
 
     @Test

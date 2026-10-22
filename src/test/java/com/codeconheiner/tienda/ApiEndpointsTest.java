@@ -2,6 +2,7 @@ package com.codeconheiner.tienda;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -78,6 +79,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.web.multipart.MultipartFile;
 
 @WebMvcTest
 @Import({SecurityConfig.class, ApiEndpointsTest.TestBeans.class})
@@ -248,6 +251,68 @@ class ApiEndpointsTest {
     }
 
     @Test
+    @WithMockUser(roles = "ADMIN")
+    void subirImagenDeProductoDevuelve201ConImagenUrlYNoExponeLaClave() throws Exception {
+        long id = crearProducto("SKU-IMG-1");
+
+        MockMultipartFile archivo = new MockMultipartFile("file", "foto.png", "image/png", pngDePrueba());
+        mvc.perform(multipart("/api/admin/productos/" + id + "/imagen").file(archivo))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.imagenUrl").value("http://localhost:9000/bucket/productos/" + id + "/clave-de-prueba.png"))
+                .andExpect(jsonPath("$.imagenKey").doesNotExist());
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void subirImagenDeProductoInexistenteDevuelve404() throws Exception {
+        MockMultipartFile archivo = new MockMultipartFile("file", "foto.png", "image/png", pngDePrueba());
+        mvc.perform(multipart("/api/admin/productos/999999/imagen").file(archivo))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.detail").value("Producto no encontrado"));
+    }
+
+    @Test
+    @WithMockUser(roles = "CLIENTE")
+    void subirImagenComoClienteDevuelve403() throws Exception {
+        MockMultipartFile archivo = new MockMultipartFile("file", "foto.png", "image/png", pngDePrueba());
+        mvc.perform(multipart("/api/admin/productos/1/imagen").file(archivo))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.detail").value("No tienes permisos para realizar esta operación."));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void eliminarImagenDeProductoDevuelve204() throws Exception {
+        long id = crearProducto("SKU-IMG-3");
+
+        mvc.perform(delete("/api/admin/productos/" + id + "/imagen"))
+                .andExpect(status().isNoContent());
+    }
+
+    private long crearProducto(String sku) throws Exception {
+        String producto = """
+                {"sku":"%s","nombre":"Producto con imagen","descripcion":"desc","precio":1000,"categoriaId":1,"stock":5}
+                """.formatted(sku);
+        String cuerpo = mvc.perform(post("/api/admin/productos").contentType("application/json").content(producto))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return new com.fasterxml.jackson.databind.ObjectMapper().readTree(cuerpo).path("id").asLong();
+    }
+
+    /** PNG valido de 1x1 generado en memoria. */
+    private static byte[] pngDePrueba() {
+        try {
+            java.awt.image.BufferedImage imagen = new java.awt.image.BufferedImage(1, 1,
+                    java.awt.image.BufferedImage.TYPE_INT_RGB);
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(imagen, "png", out);
+            return out.toByteArray();
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @Test
     void rutaAdminSinTokenDevuelve401() throws Exception {
         mvc.perform(post("/api/admin/productos").contentType("application/json").content("{}"))
                 .andExpect(status().isUnauthorized())
@@ -408,7 +473,8 @@ class ApiEndpointsTest {
                             new TiendaProperties.Pagos.Wompi(null, null, null, "wompi-test-secreto", null),
                             new TiendaProperties.Pagos.Epayco(null, null, null, "epayco-test-llave")),
                     new TiendaProperties.Captcha("test-secret", null),
-                    new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"));
+                    new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"),
+                    new TiendaProperties.Storage("http://localhost:9000", "key", "secret", "bucket", "http://localhost:9000"));
         }
 
         @Bean
@@ -958,12 +1024,17 @@ class ApiEndpointsTest {
         private long siguienteId = 1;
 
         InMemoryProductoService(TiendaProperties properties) {
-            super(new ProductoRepository((JdbcTemplate) null), properties);
+            super(new ProductoRepository((JdbcTemplate) null), properties,
+                    new com.codeconheiner.tienda.catalogo.storage.StorageService(
+                            (software.amazon.awssdk.services.s3.S3Client) null, properties));
         }
 
         @Override
         public List<ProductoResponse> listarPublico(Long categoriaId, String q, int page, int size) {
-            return productos.values().stream().filter(producto -> producto.activo()).toList();
+            return productos.values().stream().filter(producto -> producto.activo()).map(p -> new ProductoResponse(
+                    p.id(), p.sku(), p.nombre(), p.slug(), p.descripcion(), p.precio(), p.categoriaId(), p.categoria(),
+                    p.marcaId(), p.marca(), p.garantiaMeses(), p.stockDisponible(), p.activo(), p.imagenes(),
+                    p.atributos())).toList();
         }
 
         @Override
@@ -971,6 +1042,9 @@ class ApiEndpointsTest {
             return Optional.ofNullable(productos.get(id))
                     .filter(producto -> producto.activo())
                     .filter(producto -> producto.stockDisponible() > 0)
+                    .map(p -> new ProductoResponse(p.id(), p.sku(), p.nombre(), p.slug(), p.descripcion(), p.precio(),
+                            p.categoriaId(), p.categoria(), p.marcaId(), p.marca(), p.garantiaMeses(),
+                            p.stockDisponible(), p.activo(), p.imagenes(), p.atributos()))
                     .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Producto no encontrado"));
         }
 
@@ -1030,6 +1104,33 @@ class ApiEndpointsTest {
                     actual.atributos());
             productos.put(id, reactivado);
             return reactivado;
+        }
+
+        @Override
+        public ProductoResponse subirImagen(long id, MultipartFile file) {
+            ProductoResponse actual = productos.get(id);
+            if (actual == null) {
+                throw new ApiException(HttpStatus.NOT_FOUND, "Producto no encontrado");
+            }
+            String key = "productos/" + id + "/clave-de-prueba.png";
+            ProductoResponse conImagen = new ProductoResponse(actual.id(), actual.sku(), actual.nombre(), actual.slug(),
+                    actual.descripcion(), actual.precio(), actual.categoriaId(), actual.categoria(), actual.marcaId(),
+                    actual.marca(), actual.garantiaMeses(), actual.stockDisponible(), actual.activo(), actual.imagenes(),
+                    actual.atributos(), key, "http://localhost:9000/bucket/" + key);
+            productos.put(id, conImagen);
+            return conImagen;
+        }
+
+        @Override
+        public void eliminarImagen(long id) {
+            ProductoResponse actual = productos.get(id);
+            if (actual == null) {
+                throw new ApiException(HttpStatus.NOT_FOUND, "Producto no encontrado");
+            }
+            productos.put(id, new ProductoResponse(actual.id(), actual.sku(), actual.nombre(), actual.slug(),
+                    actual.descripcion(), actual.precio(), actual.categoriaId(), actual.categoria(), actual.marcaId(),
+                    actual.marca(), actual.garantiaMeses(), actual.stockDisponible(), actual.activo(), actual.imagenes(),
+                    actual.atributos()));
         }
 
         void limpiar() {

@@ -1,5 +1,6 @@
 package com.codeconheiner.tienda.catalogo;
 
+import com.codeconheiner.tienda.catalogo.storage.StorageService;
 import com.codeconheiner.tienda.common.ApiException;
 import com.codeconheiner.tienda.config.TiendaProperties;
 import java.text.Normalizer;
@@ -8,6 +9,7 @@ import java.util.Locale;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class ProductoService {
@@ -16,22 +18,27 @@ public class ProductoService {
 
     private final ProductoRepository repo;
     private final TiendaProperties props;
+    private final StorageService storageService;
 
-    public ProductoService(ProductoRepository repo, TiendaProperties props) {
+    public ProductoService(ProductoRepository repo, TiendaProperties props, StorageService storageService) {
         this.repo = repo;
         this.props = props;
+        this.storageService = storageService;
     }
 
     public List<ProductoResponse> listarPublico(Long categoriaId, String q, int page, int size) {
         int limite = Math.min(Math.max(size, 1), 50);
         int pagina = Math.max(page, 0);
-        return repo.listarPublico(categoriaId, q, limite, pagina * limite);
+        return repo.listarPublico(categoriaId, q, limite, pagina * limite).stream()
+                .map(this::conImagenUrl)
+                .toList();
     }
 
     /** Regla: un producto solo se muestra si esta activo y tiene stock. */
     public ProductoResponse detallePublico(long id) {
         return repo.buscarPorId(id)
                 .filter(p -> p.activo() && p.stockDisponible() > 0)
+                .map(this::conImagenUrl)
                 .orElseThrow(() -> noEncontrado());
     }
 
@@ -39,7 +46,7 @@ public class ProductoService {
     public ProductoResponse crear(ProductoRequest r) {
         long id = repo.crear(r, slug(r), garantia(r));
         repo.crearInventario(id, r.stock(), stockMinimo(r));
-        return repo.buscarPorId(id).orElseThrow(() -> noEncontrado());
+        return repo.buscarPorId(id).map(this::conImagenUrl).orElseThrow(() -> noEncontrado());
     }
 
     @Transactional
@@ -48,7 +55,7 @@ public class ProductoService {
             throw noEncontrado();
         }
         repo.actualizarInventario(id, r.stock(), stockMinimo(r));
-        return repo.buscarPorId(id).orElseThrow(() -> noEncontrado());
+        return repo.buscarPorId(id).map(this::conImagenUrl).orElseThrow(() -> noEncontrado());
     }
 
     /** Borrado logico: el producto deja de mostrarse pero se conserva el historial de pedidos. */
@@ -60,7 +67,7 @@ public class ProductoService {
 
     @Transactional(readOnly = true)
     public List<ProductoResponse> listarTodos() {
-        return repo.findAll();
+        return repo.findAll().stream().map(this::conImagenUrl).toList();
     }
 
     @Transactional
@@ -68,7 +75,7 @@ public class ProductoService {
         if (repo.activar(id) == 0) {
             throw noEncontrado();
         }
-        return repo.buscarPorId(id).orElseThrow(ProductoService::noEncontrado);
+        return repo.buscarPorId(id).map(this::conImagenUrl).orElseThrow(ProductoService::noEncontrado);
     }
 
     public Long agregarImagen(long id, ImagenRequest request) {
@@ -95,8 +102,42 @@ public class ProductoService {
         }
     }
 
+    /**
+     * Sustituye la imagen del producto: primero sube el objeto nuevo, despues guarda la clave y
+     * al final borra el anterior. Si la subida falla la base de datos no se toca; si el borrado del
+     * anterior falla solo queda un aviso en el log.
+     */
+    @Transactional
+    public ProductoResponse subirImagen(long id, MultipartFile file) {
+        verificarProducto(id);
+        String anterior = repo.obtenerImagenKey(id);
+        String nueva = storageService.subir(file, id);
+        repo.actualizarImagenKey(id, nueva);
+        if (anterior != null && !anterior.isBlank() && !anterior.equals(nueva)) {
+            storageService.eliminar(anterior);
+        }
+        return repo.buscarPorId(id).map(this::conImagenUrl).orElseThrow(ProductoService::noEncontrado);
+    }
+
+    /** Quita la imagen del producto: borra el objeto y deja imagen_key en null. */
+    @Transactional
+    public void eliminarImagen(long id) {
+        verificarProducto(id);
+        String anterior = repo.obtenerImagenKey(id);
+        repo.actualizarImagenKey(id, null);
+        storageService.eliminar(anterior);
+    }
+
     private void verificarProducto(long id) {
         repo.buscarPorId(id).orElseThrow(ProductoService::noEncontrado);
+    }
+
+    /** Calcula la URL publica de la imagen a partir de la clave guardada en el almacenamiento. */
+    private ProductoResponse conImagenUrl(ProductoResponse p) {
+        return new ProductoResponse(p.id(), p.sku(), p.nombre(), p.slug(), p.descripcion(), p.precio(),
+                p.categoriaId(), p.categoria(), p.marcaId(), p.marca(), p.garantiaMeses(), p.stockDisponible(),
+                p.activo(), p.imagenes(), p.atributos(), p.imagenKey(),
+                storageService.urlPublica(p.imagenKey()));
     }
 
     private int garantia(ProductoRequest r) {

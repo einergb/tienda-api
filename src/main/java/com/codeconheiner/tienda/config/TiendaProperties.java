@@ -20,7 +20,8 @@ public record TiendaProperties(
         RateLimit rateLimit,
         Pagos pagos,
         Captcha captcha,
-        Mail mail) {
+        Mail mail,
+        Storage storage) {
 
     public record Jwt(String secret, int expiracionMinutos) {}
 
@@ -57,5 +58,9 @@ public record TiendaProperties(
     }
 
     public record Mail(String from, String baseUrl) {
+    }
+
+    public record Storage(String endpoint, String accessKey, String secretKey, String bucket,
+            String publicBaseUrl) {
     }
 }

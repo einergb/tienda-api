@@ -117,4 +117,23 @@ public class AdminProductoController {
     public void eliminarAtributo(@PathVariable long id, @PathVariable String clave) {
         service.eliminarAtributo(id, clave);
     }
+
+    /**
+     * Sube la imagen del producto al almacenamiento S3-compatible y guarda solo la clave del
+     * objeto en Postgres.
+     */
+    @PostMapping(value = "/{id}/imagen", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasRole('ADMIN')")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ProductoResponse subirImagenProducto(@PathVariable long id, @RequestParam("file") MultipartFile file) {
+        return service.subirImagen(id, file);
+    }
+
+    /** Borra el objeto del almacenamiento y deja imagen_key en null. */
+    @DeleteMapping("/{id}/imagen")
+    @PreAuthorize("hasRole('ADMIN')")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void eliminarImagenProducto(@PathVariable long id) {
+        service.eliminarImagen(id);
+    }
 }

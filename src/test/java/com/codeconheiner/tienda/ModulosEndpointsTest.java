@@ -874,7 +874,8 @@ class ModulosEndpointsTest {
                             new TiendaProperties.Pagos.Wompi(null, null, null, "wompi-test-secreto", null),
                             new TiendaProperties.Pagos.Epayco(null, null, null, "epayco-test-llave")),
                     new TiendaProperties.Captcha("test-secret", null),
-                    new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"));
+                    new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"),
+                    new TiendaProperties.Storage("http://localhost:9000", "key", "secret", "bucket", "http://localhost:9000"));
         }
 
         @Bean

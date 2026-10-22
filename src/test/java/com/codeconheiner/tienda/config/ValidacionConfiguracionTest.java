@@ -23,7 +23,8 @@ class ValidacionConfiguracionTest {
                         new TiendaProperties.Pagos.Wompi(null, null, null, null, null),
                         new TiendaProperties.Pagos.Epayco(null, null, null, null)),
                 new TiendaProperties.Captcha("test-secret", null),
-                new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"));
+                new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"),
+                new TiendaProperties.Storage("http://localhost:9000", "key", "secret", "bucket", "http://localhost:9000"));
     }
 
     @Test
@@ -62,7 +63,8 @@ class ValidacionConfiguracionTest {
                 new TiendaProperties.RateLimit(0, 10, 60),
                 Pagos.simulados(),
                 new TiendaProperties.Captcha("test-secret", null),
-                new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"));
+                new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"),
+                new TiendaProperties.Storage("http://localhost:9000", "key", "secret", "bucket", "http://localhost:9000"));
 
         assertThatThrownBy(() -> new ValidacionConfiguracion(props).validar())
                 .isInstanceOf(IllegalStateException.class)

@@ -15,7 +15,7 @@ public class ProductoRepository {
             SELECT p.id, p.sku, p.nombre, p.slug, p.descripcion, p.precio,
                    p.categoria_id, c.nombre AS categoria,
                    p.marca_id, m.nombre AS marca, p.garantia_meses,
-                   (i.stock - i.stock_reservado) AS stock_disponible, p.activo
+                   (i.stock - i.stock_reservado) AS stock_disponible, p.activo, p.imagen_key
             FROM productos p
             JOIN categorias c ON c.id = p.categoria_id
             LEFT JOIN marcas m ON m.id = p.marca_id
@@ -37,7 +37,9 @@ public class ProductoRepository {
             rs.getInt("stock_disponible"),
             rs.getBoolean("activo"),
             List.of(),
-            Map.of());
+            Map.of(),
+            rs.getString("imagen_key"),
+            null);
 
     private final JdbcTemplate jdbc;
 
@@ -70,7 +72,7 @@ public class ProductoRepository {
         return jdbc.query(BASE + " WHERE p.id = ?", MAPPER, id).stream().findFirst()
                 .map(p -> new ProductoResponse(p.id(), p.sku(), p.nombre(), p.slug(), p.descripcion(), p.precio(),
                         p.categoriaId(), p.categoria(), p.marcaId(), p.marca(), p.garantiaMeses(),
-                        p.stockDisponible(), p.activo(), imagenes(id), atributos(id)));
+                        p.stockDisponible(), p.activo(), imagenes(id), atributos(id), p.imagenKey(), null));
     }
 
     private List<ImagenProductoResponse> imagenes(long productoId) {
@@ -158,6 +160,17 @@ public class ProductoRepository {
 
     public int desactivar(long id) {
         return jdbc.update("UPDATE productos SET activo = FALSE, actualizado_en = now() WHERE id = ?", id);
+    }
+
+    public int actualizarImagenKey(long id, String imagenKey) {
+        return jdbc.update("UPDATE productos SET imagen_key = ?, actualizado_en = now() WHERE id = ?", imagenKey, id);
+    }
+
+    /** Clave del objeto de imagen del producto (null si no tiene imagen). */
+    public String obtenerImagenKey(long id) {
+        List<String> claves = jdbc.query("SELECT imagen_key FROM productos WHERE id = ?",
+                (rs, n) -> rs.getString("imagen_key"), id);
+        return claves.isEmpty() ? null : claves.get(0);
     }
 
     public List<ProductoResponse> findAll() {
