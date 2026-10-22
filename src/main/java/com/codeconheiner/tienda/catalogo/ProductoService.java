@@ -31,11 +31,21 @@ public class ProductoService {
     }
 
     public List<ProductoResponse> listarPublico(Long categoriaId, String q, int page, int size) {
-        int limite = Math.min(Math.max(size, 1), 50);
-        int pagina = Math.max(page, 0);
+        int limite = limite(size);
+        int pagina = pagina(page);
         return repo.listarPublico(categoriaId, q, limite, pagina * limite).stream()
                 .map(this::conImagenUrl)
                 .toList();
+    }
+
+    /** Tamaño maximo de pagina: entre 1 y 50 productos. */
+    public static int limite(int size) {
+        return Math.min(Math.max(size, 1), 50);
+    }
+
+    /** Numero de pagina valido (nunca negativo). */
+    public static int pagina(int page) {
+        return Math.max(page, 0);
     }
 
     /** Regla: un producto solo se muestra si esta activo y tiene stock. */
