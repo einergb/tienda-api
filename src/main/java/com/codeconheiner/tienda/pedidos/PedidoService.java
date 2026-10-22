@@ -3,10 +3,12 @@ package com.codeconheiner.tienda.pedidos;
 import com.codeconheiner.tienda.carrito.CarritoRepository;
 import com.codeconheiner.tienda.carrito.dto.CarritoItemResponse;
 import com.codeconheiner.tienda.common.ApiException;
+import com.codeconheiner.tienda.config.CacheCatalogo;
 import com.codeconheiner.tienda.direcciones.DireccionService;
 import com.codeconheiner.tienda.direcciones.dto.DireccionResponse;
 import com.codeconheiner.tienda.pedidos.dto.PedidoRequest;
 import com.codeconheiner.tienda.pedidos.dto.PedidoResponse;
+import com.codeconheiner.tienda.pedidos.dto.PedidoItemResponse;
 import com.codeconheiner.tienda.pedidos.CalculadoraTotales.Totales;
 import com.codeconheiner.tienda.seguridad.Auditoria;
 import java.util.List;
@@ -27,14 +29,16 @@ public class PedidoService {
     private final DireccionService direcciones;
     private final CalculadoraTotales totales;
     private final Auditoria auditoria;
+    private final CacheCatalogo cache;
 
     public PedidoService(PedidoRepository repo, CarritoRepository carritos, DireccionService direcciones,
-            CalculadoraTotales totales, Auditoria auditoria) {
+            CalculadoraTotales totales, Auditoria auditoria, CacheCatalogo cache) {
         this.repo = repo;
         this.carritos = carritos;
         this.direcciones = direcciones;
         this.totales = totales;
         this.auditoria = auditoria;
+        this.cache = cache;
     }
 
     public List<PedidoResponse> listarPorUsuario(Long usuarioId) {
@@ -69,6 +73,8 @@ public class PedidoService {
         carritos.vaciarCarrito(carritoId);
         PedidoResponse creado = repo.obtenerPorId(usuarioId, pedidoId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Pedido no encontrado"));
+        // El trigger de V3 reservo stock: el detalle y los listados ya no son validos.
+        cache.invalidarProductos(items.stream().map(CarritoItemResponse::productoId).toList());
         auditoria.registrar(usuarioId, "pedido.creado", "pedidos", String.valueOf(pedidoId),
                 java.util.Map.of("numero", creado.numero(), "total", creado.total()));
         return creado;
@@ -96,8 +102,11 @@ public class PedidoService {
         var detalle = new java.util.HashMap<String, Object>();
         detalle.put("anterior", anterior);
         detalle.put("nuevo", nuevo);
-        auditoria.registrarActual("pedido.estado", "pedidos", String.valueOf(pedidoId), detalle);
-        return repo.obtenerPorIdAdmin(pedidoId)
+        // La maquina de estados de V3 adjusts el inventario (descuenta, libera o devuelve stock).
+        PedidoResponse actualizado = repo.obtenerPorIdAdmin(pedidoId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Pedido no encontrado"));
+        cache.invalidarProductos(actualizado.items().stream().map(PedidoItemResponse::productoId).toList());
+        auditoria.registrarActual("pedido.estado", "pedidos", String.valueOf(pedidoId), detalle);
+        return actualizado;
     }
 }

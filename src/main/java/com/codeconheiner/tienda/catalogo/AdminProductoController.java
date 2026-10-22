@@ -10,6 +10,7 @@ import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -45,7 +46,10 @@ public class AdminProductoController {
     }
 
     @PutMapping("/{id}")
-    @CacheEvict(cacheNames = {"catalogo-listado", "producto"}, allEntries = true, key = "#id")
+        @Caching(evict = {
+            @CacheEvict(cacheNames = "catalogo-listado", allEntries = true),
+            @CacheEvict(cacheNames = "producto", key = "#id")
+        })
     public ProductoResponse actualizar(@PathVariable long id, @Valid @RequestBody ProductoRequest request) {
         return service.actualizar(id, request);
     }

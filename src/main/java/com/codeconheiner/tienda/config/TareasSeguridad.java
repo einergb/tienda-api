@@ -3,8 +3,6 @@ package com.codeconheiner.tienda.config;
 import com.codeconheiner.tienda.auth.RefreshTokenStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.cache.CacheManager;
 import org.springframework.dao.DataAccessException;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -24,13 +22,13 @@ public class TareasSeguridad {
 
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final RefreshTokenStore refreshTokens;
-    private final CacheManager cacheManager;
+    private final CacheCatalogo cache;
 
     public TareasSeguridad(org.springframework.jdbc.core.JdbcTemplate jdbc, RefreshTokenStore refreshTokens,
-            ObjectProvider<CacheManager> cacheManagerProvider) {
+            CacheCatalogo cache) {
         this.jdbc = jdbc;
         this.refreshTokens = refreshTokens;
-        this.cacheManager = cacheManagerProvider.getIfAvailable();
+        this.cache = cache;
     }
 
     /** Cada 60 segundos: expira reservas vencidas. */
@@ -40,24 +38,10 @@ public class TareasSeguridad {
             Integer cancelados = jdbc.queryForObject("SELECT expirar_reservas()", Integer.class);
             if (cancelados != null && cancelados > 0) {
                 log.info("Se cancelaron {} pedidos con reserva expirada", cancelados);
-                if (cacheManager != null) {
-                    limpiarCache("producto");
-                    limpiarCache("catalogo-listado");
-                }
+                cache.invalidarTodoElCatalogo();
             }
         } catch (DataAccessException e) {
             log.warn("No se pudo ejecutar expirar_reservas(): {}", e.getMessage());
-        }
-    }
-
-    private void limpiarCache(String nombre) {
-        try {
-            org.springframework.cache.Cache cache = cacheManager.getCache(nombre);
-            if (cache != null) {
-                cache.clear();
-            }
-        } catch (Exception e) {
-            log.debug("No se pudo limpiar cache {}: {}", nombre, e.toString());
         }
     }
 

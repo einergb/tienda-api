@@ -21,6 +21,7 @@ import com.codeconheiner.tienda.catalogo.ProductoService;
 import com.codeconheiner.tienda.common.ApiException;
 import com.codeconheiner.tienda.config.SecurityConfig;
 import com.codeconheiner.tienda.config.TiendaProperties;
+import com.codeconheiner.tienda.config.CacheCatalogo;
 import com.codeconheiner.tienda.cupones.CuponRepository;
 import com.codeconheiner.tienda.cupones.CuponService;
 import com.codeconheiner.tienda.cupones.dto.CuponRequest;
@@ -702,9 +703,9 @@ class ApiEndpointsTest {
         @Bean
         PedidoService pedidoService(PedidoRepository pedidoRepository, CarritoRepository carritoRepository,
                 DireccionService direccionService, CalculadoraTotales calculadoraTotales,
-                com.codeconheiner.tienda.seguridad.Auditoria auditoria) {
+                com.codeconheiner.tienda.seguridad.Auditoria auditoria, CacheCatalogo cache) {
             return new PedidoService(pedidoRepository, carritoRepository, direccionService, calculadoraTotales,
-                    auditoria);
+                    auditoria, cache);
         }
 
         @Bean
@@ -720,8 +721,9 @@ class ApiEndpointsTest {
 
         @Bean
         PagoService pagoService(PagoRepository pagoRepository, PedidoRepository pedidoRepository,
-                PasarelaRegistry pasarelaRegistry, UsuarioRepository usuarios, TiendaProperties properties) {
-            return new PagoService(pagoRepository, pedidoRepository, pasarelaRegistry, usuarios, properties);
+                PasarelaRegistry pasarelaRegistry, UsuarioRepository usuarios, TiendaProperties properties,
+                CacheCatalogo cache) {
+            return new PagoService(pagoRepository, pedidoRepository, pasarelaRegistry, usuarios, properties, cache);
         }
 
         @Bean
@@ -769,8 +771,9 @@ class ApiEndpointsTest {
 
         @Bean
         WebhookPagoService webhookPagoService(WebhookEventosRepository eventos, PagoRepository pagos,
-                com.codeconheiner.tienda.seguridad.Auditoria auditoria) {
-            return new WebhookPagoService(eventos, pagos, auditoria);
+                PedidoRepository pedidos, com.codeconheiner.tienda.seguridad.Auditoria auditoria,
+                CacheCatalogo cache) {
+            return new WebhookPagoService(eventos, pagos, pedidos, auditoria, cache);
         }
 
         @Bean
@@ -779,8 +782,13 @@ class ApiEndpointsTest {
         }
 
         @Bean
-        EnvioService envioService(EnvioRepository envioRepository) {
-            return new EnvioService(envioRepository);
+        EnvioService envioService(EnvioRepository envioRepository, PedidoRepository pedidos, CacheCatalogo cache) {
+            return new EnvioService(envioRepository, pedidos, cache);
+        }
+
+        @Bean
+        CacheCatalogo cacheCatalogo() {
+            return new CacheCatalogo(new org.springframework.cache.concurrent.ConcurrentMapCacheManager());
         }
     }
 

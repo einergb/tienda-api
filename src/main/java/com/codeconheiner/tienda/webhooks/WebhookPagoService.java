@@ -2,6 +2,8 @@ package com.codeconheiner.tienda.webhooks;
 
 import com.codeconheiner.tienda.pagos.PagoDetalle;
 import com.codeconheiner.tienda.pagos.PagoRepository;
+import com.codeconheiner.tienda.config.CacheCatalogo;
+import com.codeconheiner.tienda.pedidos.PedidoRepository;
 import com.codeconheiner.tienda.seguridad.Auditoria;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -21,12 +23,17 @@ public class WebhookPagoService {
 
     private final WebhookEventosRepository eventos;
     private final PagoRepository pagos;
+    private final PedidoRepository pedidos;
     private final Auditoria auditoria;
+    private final CacheCatalogo cache;
 
-    public WebhookPagoService(WebhookEventosRepository eventos, PagoRepository pagos, Auditoria auditoria) {
+    public WebhookPagoService(WebhookEventosRepository eventos, PagoRepository pagos, PedidoRepository pedidos,
+            Auditoria auditoria, CacheCatalogo cache) {
         this.eventos = eventos;
         this.pagos = pagos;
+        this.pedidos = pedidos;
         this.auditoria = auditoria;
+        this.cache = cache;
     }
 
     /**
@@ -57,6 +64,10 @@ public class WebhookPagoService {
         String estado = evento.aprobado() ? "APROBADO" : "RECHAZADO";
         if (pagos.actualizarEstado(pago.id(), estado) == 0) {
             return "referencia-desconocida";
+        }
+        if (evento.aprobado()) {
+            pedidos.obtenerPorIdAdmin(pago.pedidoId()).ifPresent(pedido -> cache.invalidarProductos(
+                    pedido.items().stream().map(item -> item.productoId()).toList()));
         }
         log.info("Webhook {}: pago {} {} (pedido {})",
                 evento.pasarela(), pago.id(), estado, pago.pedidoId());

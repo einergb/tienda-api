@@ -1,6 +1,7 @@
 package com.codeconheiner.tienda.pagos;
 
 import com.codeconheiner.tienda.common.ApiException;
+import com.codeconheiner.tienda.config.CacheCatalogo;
 import com.codeconheiner.tienda.config.TiendaProperties;
 import com.codeconheiner.tienda.pagos.dto.PagoConPasarelaRequest;
 import com.codeconheiner.tienda.pagos.dto.PagoRequest;
@@ -37,14 +38,16 @@ public class PagoService {
     private final PasarelaRegistry pasarelas;
     private final UsuarioRepository usuarios;
     private final TiendaProperties props;
+    private final CacheCatalogo cache;
 
     public PagoService(PagoRepository repo, PedidoRepository pedidos, PasarelaRegistry pasarelas,
-            UsuarioRepository usuarios, TiendaProperties props) {
+            UsuarioRepository usuarios, TiendaProperties props, CacheCatalogo cache) {
         this.repo = repo;
         this.pedidos = pedidos;
         this.pasarelas = pasarelas;
         this.usuarios = usuarios;
         this.props = props;
+        this.cache = cache;
     }
 
     public List<PagoResponse> listarPorPedido(Long pedidoId) {
@@ -64,8 +67,12 @@ public class PagoService {
         if (!ESTADOS.contains(estado)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Estado de pago no válido");
         }
-        return repo.crear(pedido.id(), request.pasarela().trim(), request.referencia().trim(),
-                estado, pedido.total());
+        PagoResponse pago = repo.crear(pedido.id(), request.pasarela().trim(), request.referencia().trim(),
+            estado, pedido.total());
+        if ("APROBADO".equals(estado)) {
+            cache.invalidarProductos(pedido.items().stream().map(item -> item.productoId()).toList());
+        }
+        return pago;
     }
 
     /**

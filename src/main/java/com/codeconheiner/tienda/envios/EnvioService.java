@@ -1,9 +1,11 @@
 package com.codeconheiner.tienda.envios;
 
 import com.codeconheiner.tienda.common.ApiException;
+import com.codeconheiner.tienda.config.CacheCatalogo;
 import com.codeconheiner.tienda.envios.dto.EnvioCrearRequest;
 import com.codeconheiner.tienda.envios.dto.EnvioActualizarRequest;
 import com.codeconheiner.tienda.envios.dto.EnvioResponse;
+import com.codeconheiner.tienda.pedidos.PedidoRepository;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -18,9 +20,13 @@ public class EnvioService {
     private static final Set<String> ESTADOS_ACTUALIZACION = Set.of("EN_CAMINO", "ENTREGADO", "DEVUELTO");
 
     private final EnvioRepository repo;
+    private final PedidoRepository pedidos;
+    private final CacheCatalogo cache;
 
-    public EnvioService(EnvioRepository repo) {
+    public EnvioService(EnvioRepository repo, PedidoRepository pedidos, CacheCatalogo cache) {
         this.repo = repo;
+        this.pedidos = pedidos;
+        this.cache = cache;
     }
 
     public EnvioResponse obtenerPorPedido(Long pedidoId) {
@@ -57,7 +63,13 @@ public class EnvioService {
         if (repo.actualizar(id, estado, texto(request.transportadora()), texto(request.guia())) == 0) {
             throw new ApiException(HttpStatus.NOT_FOUND, "Envio no encontrado");
         }
-        return repo.obtenerPorId(id).orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Envio no encontrado"));
+        EnvioResponse actualizado = repo.obtenerPorId(id)
+            .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Envio no encontrado"));
+        if ("DEVUELTO".equals(estado)) {
+            pedidos.obtenerPorIdAdmin(actualizado.pedidoId()).ifPresent(pedido -> cache.invalidarProductos(
+                pedido.items().stream().map(item -> item.productoId()).toList()));
+        }
+        return actualizado;
     }
 
     private static String normalizar(String estado, String porDefecto) {
