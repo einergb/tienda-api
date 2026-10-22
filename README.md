@@ -60,7 +60,7 @@ La aplicación está organizada por dominios bajo `com.codeconheiner.tienda`:
 | `config`, `seguridad` | Configuración, filtros y tareas programadas. |
 | `common` | Manejo de errores, hashes y limitación de solicitudes. |
 
-Los controladores reciben solicitudes, los servicios coordinan reglas de aplicación y los repositorios ejecutan SQL con `JdbcTemplate`. La API utiliza Problem Details para mantener respuestas de error consistentes.
+Los controladores reciben solicitudes, los servicios coordinan reglas de aplicación y los repositorios ejecutan SQL con `JdbcTemplate`. Las lecturas públicas del catálogo pueden usar Redis; las imágenes se almacenan en RustFS mediante la API compatible con AWS S3. La API utiliza Problem Details para mantener respuestas de error consistentes.
 
 ### Diagrama de componentes
 
@@ -72,15 +72,25 @@ flowchart LR
     Controladores[Controladores REST]
     Servicios[Servicios de dominio]
     Repositorios[Repositorios JDBC]
+    Cache[CacheConfig y CacheCatalogo]
+    Storage[StorageService]
     Pagos[Adaptadores de pago]
     Webhooks[Verificación y procesamiento de webhooks]
     Tareas[Tareas programadas]
   end
   DB[(PostgreSQL)]
+  Redis[(Redis)]
+  RustFS[(RustFS S3-compatible)]
   Wompi[Wompi]
   Epayco[ePayco]
 
   Cliente --> Filtros --> Controladores --> Servicios --> Repositorios --> DB
+  Controladores --> Storage
+  Storage -->|AWS SDK S3, path-style| RustFS
+  Controladores -. "@Cacheable / @CacheEvict" .-> Cache
+  Servicios --> Cache
+  Tareas --> Cache
+  Cache --> Redis
   Servicios --> Pagos
   Pagos --> Wompi
   Pagos --> Epayco
@@ -146,6 +156,95 @@ classDiagram
   WebhookPagoService --> WebhookEventosRepository : deduplicación
   WebhookPagoService --> PagoRepository : estado del pago
   PagoService --> PagoRepository : crea intentos
+```
+
+### UML de clases: caché y almacenamiento
+
+`CACHE_TYPE=redis` selecciona el gestor Redis; con `none`, la caché no se activa. El almacenamiento usa AWS SDK S3 contra RustFS, con bucket configurable y URL pública independiente del endpoint de escritura.
+
+```mermaid
+classDiagram
+  class CatalogoController
+  class AdminProductoController
+  class ProductoService
+  class CacheCatalogo {
+    +invalidarProducto(id)
+    +invalidarProductos(ids)
+    +invalidarTodoElCatalogo()
+  }
+  class CacheConfig
+  class RedisCacheManager
+  class CacheManager
+  class TiendaProperties
+  class StorageConfig
+  class StorageService {
+    +subir(file, productoId) String
+    +urlPublica(key) String
+    +eliminar(key)
+  }
+  class S3Client {
+    endpointOverride
+    pathStyleAccessEnabled
+  }
+  class RustFS
+  class Bucket
+
+  CatalogoController ..> CacheConfig : @Cacheable
+  AdminProductoController ..> CacheConfig : @CacheEvict
+  CacheConfig --> RedisCacheManager : CACHE_TYPE=redis
+  RedisCacheManager ..|> CacheManager
+  CacheCatalogo --> CacheManager : evict / clear
+  ProductoService --> CacheCatalogo : cambios de catálogo
+  AdminProductoController --> ProductoService
+  ProductoService --> StorageService : imágenes
+  AdminProductoController --> StorageService : imágenes
+  StorageConfig --> S3Client : endpoint y credenciales
+  StorageService --> S3Client : PutObject / DeleteObject
+  StorageService --> TiendaProperties : bucket y URL pública
+  S3Client --> RustFS : API AWS S3
+  RustFS *-- Bucket : contiene
+```
+
+### UML de secuencia: carga de imagen
+
+PostgreSQL conserva `imagen_key`, no los bytes. La URL pública se calcula por separado a partir de `STORAGE_PUBLIC_URL`, el bucket y la clave del objeto.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor Admin
+  participant C as AdminProductoController
+  participant P as ProductoService
+  participant R as ProductoRepository
+  participant S as StorageService
+  participant SDK as AWS S3 SDK
+  participant F as RustFS bucket
+  participant DB as PostgreSQL
+
+  Admin->>C: POST /api/admin/productos/{id}/imagen (multipart)
+  C->>P: subirImagen(id, file)
+  P->>R: verificar producto y leer imagen_key anterior
+  R->>DB: SELECT producto, imagen_key
+  DB-->>R: producto e imagen_key
+  P->>S: subir(file, id)
+  S->>S: validar tipo, tamaño y contenido
+  S->>SDK: PutObject(bucket, productos/{id}/{uuid}.ext)
+  SDK->>F: PUT objeto (path-style)
+  F-->>SDK: objeto creado
+  SDK-->>S: clave del objeto
+  S-->>P: clave nueva
+  P->>R: actualizar imagen_key
+  R->>DB: UPDATE productos
+  opt Existe clave anterior
+    P->>S: eliminar(clave anterior)
+    S->>SDK: DeleteObject(bucket, clave anterior)
+    SDK->>F: DELETE objeto
+  end
+  P->>S: urlPublica(clave nueva)
+  S-->>P: URL pública
+  P-->>C: ProductoResponse con imagenUrl
+  Note over C: Invalida producto y catalogo-listado
+  C-->>Admin: 201 Created
 ```
 
 ### UML de secuencia: confirmación de pago
