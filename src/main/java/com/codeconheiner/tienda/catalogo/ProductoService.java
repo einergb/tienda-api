@@ -6,6 +6,9 @@ import com.codeconheiner.tienda.config.TiendaProperties;
 import java.text.Normalizer;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -14,6 +17,7 @@ import org.springframework.web.multipart.MultipartFile;
 @Service
 public class ProductoService {
 
+    private static final Logger log = LoggerFactory.getLogger(ProductoService.class);
     private static final int GARANTIA_POR_DEFECTO = 12;
 
     private final ProductoRepository repo;
@@ -90,6 +94,49 @@ public class ProductoService {
         }
     }
 
+    @Transactional
+    public String subirImagenGaleria(long id, MultipartFile archivo) {
+        verificarProducto(id);
+        String key = storageService.subirArchivo(archivo, "productos/" + id);
+        return storageService.urlPublica(key);
+    }
+
+    @Transactional
+    public void eliminarImagenGaleria(long id, long imagenId) {
+        verificarProducto(id);
+        String url = repo.obtenerImagenGaleriaUrl(id, imagenId);
+        if (url == null) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "Imagen no encontrada");
+        }
+        if (repo.eliminarImagen(id, imagenId) == 0) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "Imagen no encontrada");
+        }
+        Optional<String> clave = storageService.derivarClaveDesdeUrlPublica(url);
+        if (clave.isPresent()) {
+            storageService.eliminar(clave.get());
+        } else if (esUrlDeAlmacenamientoPropio(url)) {
+            // Intento best effort sin clave conocida; mejor no forzar
+            log.debug("No se pudo derivar clave desde URL de galería propia para producto {} imagen {}", id, imagenId);
+        }
+    }
+
+    private boolean esUrlDeAlmacenamientoPropio(String url) {
+        String base = null;
+        try {
+            if (props != null && props.storage() != null) {
+                base = props.storage().publicBaseUrl();
+            }
+        } catch (Exception ignored) {
+        }
+        if (base != null && !base.isBlank()) {
+            String baseLimpia = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+            if (url != null && url.startsWith(baseLimpia + "/")) {
+                return true;
+            }
+        }
+        return url != null && url.contains("/tienda-productos") || (url != null && url.contains("img.codeconheiner"));
+    }
+
     public Long agregarAtributo(long id, AtributoRequest request) {
         verificarProducto(id);
         return repo.agregarAtributo(id, request);
@@ -124,7 +171,11 @@ public class ProductoService {
     public void eliminarImagen(long id) {
         verificarProducto(id);
         String anterior = repo.obtenerImagenKey(id);
+        String urlAnterior = anterior == null || anterior.isBlank() ? null : storageService.urlPublica(anterior);
         repo.actualizarImagenKey(id, null);
+        if (urlAnterior != null) {
+            repo.eliminarImagenPorUrl(id, urlAnterior);
+        }
         storageService.eliminar(anterior);
     }
 

@@ -312,7 +312,12 @@ La documentación interactiva está en Swagger UI. Resumen de rutas principales:
 | `POST` | `/api/admin/productos` | `ADMIN` | Crea producto e inventario inicial. |
 | `PUT` | `/api/admin/productos/{id}` | `ADMIN` | Actualiza datos del producto e inventario. |
 | `DELETE` | `/api/admin/productos/{id}` | `ADMIN` | Desactiva lógicamente el producto. |
-| `POST` / `DELETE` | `/api/admin/productos/{id}/imagenes[/{imagenId}]` | `ADMIN` | Agrega o elimina un registro de imagen por URL. No sube archivos. |
+| `POST` | `/api/admin/productos/{id}/imagen` | `ADMIN` | Sube la imagen principal (`multipart/form-data`, campo `file`). Guarda clave en `productos.imagen_key` y sincroniza galería. |
+| `DELETE` | `/api/admin/productos/{id}/imagen` | `ADMIN` | Elimina imagen principal y objeto en S3. |
+| `POST` | `/api/admin/productos/imagenes` | `ADMIN` | Sube archivo (`multipart/form-data`, `archivo`) con prefijo `productos/sin-asignar` o acepta `imagenUrl` (http/https). |
+| `POST` | `/api/admin/productos/{id}/imagenes` | `ADMIN` | Agrega entrada a galería por JSON (`url`, `orden`, `esPrincipal`). |
+| `POST` | `/api/admin/productos/{id}/imagenes/upload` | `ADMIN` | Sube archivo a galería (`multipart/form-data`, `archivo`) con StorageService. |
+| `DELETE` | `/api/admin/productos/{id}/imagenes/{imagenId}` | `ADMIN` | Elimina registro de galería; si es URL propia borra objeto S3 (best effort). |
 | `POST` / `DELETE` | `/api/admin/productos/{id}/atributos[/{clave}]` | `ADMIN` | Gestiona atributos clave/valor. |
 | `GET` / `POST` / `PUT` / `DELETE` | `/api/carrito` y `/api/carrito/items` | Autenticado | Consulta y modifica el carrito propio. |
 | `GET` / `POST` / `PUT` / `DELETE` | `/api/direcciones` | Autenticado | Gestiona direcciones propias. |
@@ -353,9 +358,13 @@ curl -i http://localhost:8080/api/catalogo/productos
 
 Para administrar productos, usa `Authorization: Bearer <token>`. La cuenta debe tener el rol `ADMIN`.
 
-### Imágenes de productos actualmente
+### Imágenes de productos
 
-`POST /api/admin/productos/{id}/imagenes` recibe JSON con `url`, `orden` y `esPrincipal`. Persiste la URL como metadato en PostgreSQL. El archivo debe estar alojado por otro servicio y ser accesible desde el cliente; esta API no recibe `multipart/form-data`, no almacena archivos y no valida que la URL resuelva a una imagen.
+- **Imagen principal**: `productos.imagen_key` es la fuente de verdad. `POST /api/admin/productos/{id}/imagen` sube con `StorageService`, actualiza la clave, sincroniza `producto_imagenes` (pone otras como no principales, reemplaza fila de la principal anterior, inserta nueva con `es_principal=true`, `orden=0`) y borra el objeto anterior (best effort).
+- **Galería**: `POST /api/admin/productos/{id}/imagenes/upload` sube archivo con `StorageService`. `POST /api/admin/productos/{id}/imagenes` acepta JSON con `url`. `POST /api/admin/productos/imagenes` sube archivo con prefijo `productos/sin-asignar` o acepta `imagenUrl` http/https válida.
+- **Eliminación**: `DELETE /api/admin/productos/{id}/imagen` borra objeto y limpia galería/clave. `DELETE /api/admin/productos/{id}/imagenes/{imagenId}` borra la fila; si la URL es propia (`STORAGE_PUBLIC_URL`) intenta borrar el objeto S3 (best effort).
+- **Almacenamiento**: S3-compatible (RustFS). Las claves se generan con UUID, nunca con el nombre original. `Cache-Control: public, max-age=31536000, immutable`. Al borrar un objeto el CDN puede seguir sirviéndolo hasta expirar o purgarse. `STORAGE_PUBLIC_URL_INCLUYE_BUCKET` controla si la URL pública incluye el bucket.
+- **Nota**: puede existir una fila de galería con placeholder tipo `https://<HOST_DE_IMAGENES>/...` (producto 1 en producción). No se borra automáticamente por código/migración; requiere limpieza manual.
 
 El catálogo público solo muestra productos activos con stock disponible. El `PUT` actualiza los datos e inventario, pero no reactiva productos; actualmente la API no expone un endpoint de reactivación.
 

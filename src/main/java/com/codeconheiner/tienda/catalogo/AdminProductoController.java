@@ -1,8 +1,10 @@
 package com.codeconheiner.tienda.catalogo;
 
-import com.codeconheiner.tienda.catalogo.storage.ImageStorage;
+import com.codeconheiner.tienda.catalogo.storage.StorageService;
 import com.codeconheiner.tienda.common.ApiException;
 import jakarta.validation.Valid;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -27,11 +29,11 @@ import org.springframework.web.multipart.MultipartFile;
 public class AdminProductoController {
 
     private final ProductoService service;
-    private final ImageStorage imageStorage;
+    private final StorageService storageService;
 
-    public AdminProductoController(ProductoService service, ImageStorage imageStorage) {
+    public AdminProductoController(ProductoService service, StorageService storageService) {
         this.service = service;
-        this.imageStorage = imageStorage;
+        this.storageService = storageService;
     }
 
     @PostMapping
@@ -64,6 +66,7 @@ public class AdminProductoController {
     }
 
     @PostMapping(value = "/{id}/imagenes", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @PreAuthorize("hasRole('ADMIN')")
     @ResponseStatus(HttpStatus.CREATED)
     public ImagenProductoResponse agregarImagenJson(@PathVariable long id,
             @Valid @RequestBody ImagenRequest request) {
@@ -73,26 +76,39 @@ public class AdminProductoController {
     }
 
     @PostMapping(value = "/imagenes", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasRole('ADMIN')")
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, String> subirImagen(@RequestParam(required = false) MultipartFile archivo,
             @RequestParam(required = false) String imagenUrl) {
         if (archivo != null && !archivo.isEmpty()) {
-            String url = imageStorage.upload(archivo);
+            String key = storageService.subirArchivo(archivo, "productos/sin-asignar");
+            String url = storageService.urlPublica(key);
             return Map.of("imagenUrl", url);
         }
         if (imagenUrl != null && !imagenUrl.isBlank()) {
-            return Map.of("imagenUrl", imagenUrl);
+            String trimmed = imagenUrl.trim();
+            try {
+                URL u = new URL(trimmed);
+                String protocolo = u.getProtocol();
+                if (!"http".equalsIgnoreCase(protocolo) && !"https".equalsIgnoreCase(protocolo)) {
+                    throw new ApiException(HttpStatus.BAD_REQUEST, "URL de imagen no válida");
+                }
+            } catch (MalformedURLException e) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "URL de imagen no válida");
+            }
+            return Map.of("imagenUrl", trimmed);
         }
         throw new ApiException(HttpStatus.BAD_REQUEST, "Debes enviar 'archivo' o 'imagenUrl'");
     }
 
     @PostMapping(value = "/{id}/imagenes/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasRole('ADMIN')")
     @ResponseStatus(HttpStatus.CREATED)
     public ImagenProductoResponse agregarImagenUpload(@PathVariable long id,
             @RequestParam MultipartFile archivo,
             @RequestParam(required = false) Integer orden,
             @RequestParam(required = false) Boolean esPrincipal) {
-        String url = imageStorage.upload(archivo);
+        String url = service.subirImagenGaleria(id, archivo);
         ImagenRequest request = new ImagenRequest(url, orden, esPrincipal);
         Long imagenId = service.agregarImagen(id, request);
         return new ImagenProductoResponse(imagenId, request.url(), request.orden() == null ? 0 : request.orden(),
@@ -100,9 +116,10 @@ public class AdminProductoController {
     }
 
     @DeleteMapping("/{id}/imagenes/{imagenId}")
+    @PreAuthorize("hasRole('ADMIN')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void eliminarImagen(@PathVariable long id, @PathVariable long imagenId) {
-        service.eliminarImagen(id, imagenId);
+        service.eliminarImagenGaleria(id, imagenId);
     }
 
     @PostMapping("/{id}/atributos")

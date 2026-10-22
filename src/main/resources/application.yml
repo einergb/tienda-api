@@ -79,4 +79,5 @@ tienda:
     secret-key: ${STORAGE_SECRET_KEY:}
     bucket: ${STORAGE_BUCKET:tienda-productos-dev}
     public-base-url: ${STORAGE_PUBLIC_URL:http://192.168.0.150:9000}
+    public-url-incluye-bucket: ${STORAGE_PUBLIC_URL_INCLUYE_BUCKET:true}
 

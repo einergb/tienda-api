@@ -59,6 +59,15 @@ public class UsuarioRepository {
         return new Usuario(id, nombre, email, passwordHash, rol, false, false, "PENDIENTE");
     }
 
+    public Usuario crearAdmin(String nombre, String email, String passwordHash) {
+        Long id = jdbc.queryForObject("""
+                INSERT INTO usuarios (nombre, email, password_hash, rol_id, activo, email_verificado, estado)
+                VALUES (?, ?, ?, (SELECT id FROM roles WHERE nombre = 'ADMIN'), TRUE, TRUE, 'ACTIVO')
+                RETURNING id
+                """, Long.class, nombre, email, passwordHash);
+        return new Usuario(id, nombre, email, passwordHash, "ADMIN", true, true, "ACTIVO");
+    }
+
     public Usuario crearCompleto(String nombre, String primerNombre, String segundoNombre, String primerApellido,
             String segundoApellido, String email, String telefono, String passwordHash, String rol) {
         Long id = jdbc.queryForObject("""

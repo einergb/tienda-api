@@ -875,12 +875,79 @@ class ModulosEndpointsTest {
                             new TiendaProperties.Pagos.Epayco(null, null, null, "epayco-test-llave")),
                     new TiendaProperties.Captcha("test-secret", null),
                     new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"),
-                    new TiendaProperties.Storage("http://localhost:9000", "key", "secret", "bucket", "http://localhost:9000"));
+                    new TiendaProperties.Storage("http://localhost:9000", "key", "secret", "bucket", "http://localhost:9000", Boolean.TRUE));
         }
 
         @Bean
-        com.codeconheiner.tienda.catalogo.storage.ImageStorage imageStorage() {
-            return new com.codeconheiner.tienda.catalogo.storage.UrlOnlyImageStorage();
+        com.codeconheiner.tienda.catalogo.storage.StorageService storageService(TiendaProperties properties) {
+            return new com.codeconheiner.tienda.catalogo.storage.StorageService(
+                    (software.amazon.awssdk.services.s3.S3Client) null, properties) {
+                @Override
+                public String subirArchivo(org.springframework.web.multipart.MultipartFile file, String prefijo) {
+                    String p = prefijo == null ? "productos/sin-asignar" : prefijo.replaceAll("^/+", "").replaceAll("/+$", "");
+                    return p + "/clave-de-prueba.png";
+                }
+
+                @Override
+                public String subir(org.springframework.web.multipart.MultipartFile file, Long productoId) {
+                    return "productos/" + productoId + "/clave-de-prueba.png";
+                }
+
+                @Override
+                public String urlPublica(String key) {
+                    if (key == null || key.isBlank()) {
+                        return null;
+                    }
+                    String base = properties.storage() != null && properties.storage().publicBaseUrl() != null
+                            ? properties.storage().publicBaseUrl() : "http://localhost:9000";
+                    String bucket = properties.storage() != null && properties.storage().bucket() != null
+                            ? properties.storage().bucket() : "bucket";
+                    boolean incluyeBucket = properties.storage() == null
+                            || properties.storage().publicUrlIncluyeBucket() == null
+                            || Boolean.TRUE.equals(properties.storage().publicUrlIncluyeBucket());
+                    if (base.endsWith("/")) {
+                        base = base.substring(0, base.length() - 1);
+                    }
+                    if (incluyeBucket) {
+                        return base + "/" + bucket + "/" + key;
+                    }
+                    return base + "/" + key;
+                }
+
+                @Override
+                public void eliminar(String key) {
+                }
+
+                @Override
+                public java.util.Optional<String> derivarClaveDesdeUrlPublica(String url) {
+                    if (url == null) {
+                        return java.util.Optional.empty();
+                    }
+                    String base = (properties.storage() != null && properties.storage().publicBaseUrl() != null)
+                            ? properties.storage().publicBaseUrl() : "http://localhost:9000";
+                    String bucket = (properties.storage() != null && properties.storage().bucket() != null)
+                            ? properties.storage().bucket() : "bucket";
+                    boolean incluyeBucket = properties.storage() == null
+                            || properties.storage().publicUrlIncluyeBucket() == null
+                            || Boolean.TRUE.equals(properties.storage().publicUrlIncluyeBucket());
+                    if (base.endsWith("/")) {
+                        base = base.substring(0, base.length() - 1);
+                    }
+                    String pref = base + "/";
+                    if (!url.startsWith(pref)) {
+                        return java.util.Optional.empty();
+                    }
+                    String resto = url.substring(pref.length());
+                    if (incluyeBucket) {
+                        if (resto.startsWith(bucket + "/")) {
+                            String clave = resto.substring((bucket + "/").length());
+                            return clave.isBlank() ? java.util.Optional.empty() : java.util.Optional.of(clave);
+                        }
+                        return java.util.Optional.empty();
+                    }
+                    return resto.isBlank() ? java.util.Optional.empty() : java.util.Optional.of(resto);
+                }
+            };
         }
 
         @Bean

@@ -79,7 +79,7 @@ class RateLimitingTest {
                     TiendaProperties.Pagos.simulados(),
                     new TiendaProperties.Captcha("test-secret", null),
                     new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"),
-                    new TiendaProperties.Storage("http://localhost:9000", "key", "secret", "bucket", "http://localhost:9000"));
+                    new TiendaProperties.Storage("http://localhost:9000", "key", "secret", "bucket", "http://localhost:9000", Boolean.TRUE));
         }
 
         @Bean

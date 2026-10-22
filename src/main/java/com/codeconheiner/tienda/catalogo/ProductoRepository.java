@@ -113,6 +113,15 @@ public class ProductoRepository {
         return jdbc.update("DELETE FROM producto_imagenes WHERE id = ? AND producto_id = ?", imagenId, productoId);
     }
 
+    public String obtenerImagenGaleriaUrl(long productoId, long imagenId) {
+        List<String> urls = jdbc.query(
+                "SELECT url FROM producto_imagenes WHERE id = ? AND producto_id = ?",
+                (rs, n) -> rs.getString("url"),
+                imagenId,
+                productoId);
+        return urls.isEmpty() ? null : urls.get(0);
+    }
+
     public Long agregarAtributo(long productoId, AtributoRequest r) {
         return jdbc.queryForObject("""
                 INSERT INTO producto_atributos (producto_id, clave, valor)
@@ -164,6 +173,27 @@ public class ProductoRepository {
 
     public int actualizarImagenKey(long id, String imagenKey) {
         return jdbc.update("UPDATE productos SET imagen_key = ?, actualizado_en = now() WHERE id = ?", imagenKey, id);
+    }
+
+    public void actualizarGaleriaPonerNoPrincipal(long productoId) {
+        jdbc.update("UPDATE producto_imagenes SET es_principal = FALSE WHERE producto_id = ?", productoId);
+    }
+
+    public void eliminarImagenPorUrl(long productoId, String url) {
+        if (url == null) {
+            return;
+        }
+        jdbc.update("DELETE FROM producto_imagenes WHERE producto_id = ? AND url = ?", productoId, url);
+    }
+
+    public void insertarImagenPrincipal(long productoId, String url, int orden) {
+        if (url == null || url.isBlank()) {
+            return;
+        }
+        jdbc.update("""
+                INSERT INTO producto_imagenes (producto_id, url, orden, es_principal)
+                VALUES (?, ?, ?, TRUE)
+                """, productoId, url.trim(), orden);
     }
 
     /** Clave del objeto de imagen del producto (null si no tiene imagen). */

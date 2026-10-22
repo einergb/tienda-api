@@ -29,13 +29,18 @@ public class AdminBootstrap implements ApplicationRunner {
         String email = props.admin().email();
         String password = props.admin().password();
         if (password == null || password.isBlank()) {
-            log.info("ADMIN_PASSWORD no definido: no se crea administrador inicial.");
+            log.warn("ADMIN_PASSWORD no definido: no se crea administrador inicial.");
             return;
         }
-        if (usuarios.existePorEmail(email)) {
+        if (email == null || email.isBlank()) {
+            log.warn("ADMIN_EMAIL no definido: no se crea administrador inicial.");
             return;
         }
-        usuarios.crear("Administrador", email.trim().toLowerCase(), encoder.encode(password), "ADMIN");
-        log.info("Administrador inicial creado: {}", email);
+        String emailNormalizado = email.trim().toLowerCase();
+        if (usuarios.existePorEmail(emailNormalizado)) {
+            return;
+        }
+        usuarios.crearAdmin("Administrador", emailNormalizado, encoder.encode(password));
+        log.info("Administrador inicial creado: {}", emailNormalizado);
     }
 }

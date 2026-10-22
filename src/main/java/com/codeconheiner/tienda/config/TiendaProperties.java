@@ -61,6 +61,6 @@ public record TiendaProperties(
     }
 
     public record Storage(String endpoint, String accessKey, String secretKey, String bucket,
-            String publicBaseUrl) {
+            String publicBaseUrl, Boolean publicUrlIncluyeBucket) {
     }
 }

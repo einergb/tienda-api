@@ -474,12 +474,59 @@ class ApiEndpointsTest {
                             new TiendaProperties.Pagos.Epayco(null, null, null, "epayco-test-llave")),
                     new TiendaProperties.Captcha("test-secret", null),
                     new TiendaProperties.Mail("no-reply@test.local", "http://localhost:8080"),
-                    new TiendaProperties.Storage("http://localhost:9000", "key", "secret", "bucket", "http://localhost:9000"));
+                    new TiendaProperties.Storage("http://localhost:9000", "key", "secret", "bucket", "http://localhost:9000", Boolean.TRUE));
         }
 
         @Bean
-        com.codeconheiner.tienda.catalogo.storage.ImageStorage imageStorage() {
-            return new com.codeconheiner.tienda.catalogo.storage.UrlOnlyImageStorage();
+        com.codeconheiner.tienda.catalogo.storage.StorageService storageService(TiendaProperties properties) {
+            return new com.codeconheiner.tienda.catalogo.storage.StorageService(
+                    (software.amazon.awssdk.services.s3.S3Client) null, properties) {
+                @Override
+                public String subirArchivo(org.springframework.web.multipart.MultipartFile file, String prefijo) {
+                    String key = (prefijo == null ? "productos/sin-asignar" : prefijo.replaceAll("^/+", "").replaceAll("/+$", ""))
+                            + "/clave-de-prueba.png";
+                    return key;
+                }
+
+                @Override
+                public String subir(org.springframework.web.multipart.MultipartFile file, Long productoId) {
+                    return "productos/" + productoId + "/clave-de-prueba.png";
+                }
+
+                @Override
+                public String urlPublica(String key) {
+                    if (key == null || key.isBlank()) {
+                        return null;
+                    }
+                    String base = "http://localhost:9000";
+                    String bucket = "bucket";
+                    if (properties.storage() != null && properties.storage().publicBaseUrl() != null) {
+                        base = properties.storage().publicBaseUrl();
+                    }
+                    if (properties.storage() != null && properties.storage().bucket() != null) {
+                        bucket = properties.storage().bucket();
+                    }
+                    boolean incluyeBucket = properties.storage() == null
+                            || properties.storage().publicUrlIncluyeBucket() == null
+                            || Boolean.TRUE.equals(properties.storage().publicUrlIncluyeBucket());
+                    if (base.endsWith("/")) {
+                        base = base.substring(0, base.length() - 1);
+                    }
+                    if (incluyeBucket) {
+                        return base + "/" + bucket + "/" + key;
+                    }
+                    return base + "/" + key;
+                }
+
+                @Override
+                public void eliminar(String key) {
+                }
+
+                @Override
+                public java.util.Optional<String> derivarClaveDesdeUrlPublica(String url) {
+                    return java.util.Optional.empty();
+                }
+            };
         }
 
         @Bean
@@ -1026,7 +1073,42 @@ class ApiEndpointsTest {
         InMemoryProductoService(TiendaProperties properties) {
             super(new ProductoRepository((JdbcTemplate) null), properties,
                     new com.codeconheiner.tienda.catalogo.storage.StorageService(
-                            (software.amazon.awssdk.services.s3.S3Client) null, properties));
+                            (software.amazon.awssdk.services.s3.S3Client) null, properties) {
+                        @Override
+                        public String subirArchivo(org.springframework.web.multipart.MultipartFile file, String prefijo) {
+                            String p = prefijo == null ? "productos/sin-asignar" : prefijo.replaceAll("^/+", "").replaceAll("/+$", "");
+                            return p + "/clave-de-prueba.png";
+                        }
+
+                        @Override
+                        public String subir(org.springframework.web.multipart.MultipartFile file, Long productoId) {
+                            return "productos/" + productoId + "/clave-de-prueba.png";
+                        }
+
+                        @Override
+                        public String urlPublica(String key) {
+                            if (key == null || key.isBlank()) {
+                                return null;
+                            }
+                            return "http://localhost:9000/bucket/" + key;
+                        }
+
+                        @Override
+                        public void eliminar(String key) {
+                        }
+
+                        @Override
+                        public java.util.Optional<String> derivarClaveDesdeUrlPublica(String url) {
+                            if (url == null) {
+                                return java.util.Optional.empty();
+                            }
+                            String base = "http://localhost:9000/bucket/";
+                            if (url.startsWith(base)) {
+                                return java.util.Optional.of(url.substring(base.length()));
+                            }
+                            return java.util.Optional.empty();
+                        }
+                    });
         }
 
         @Override
@@ -1119,6 +1201,15 @@ class ApiEndpointsTest {
                     actual.atributos(), key, "http://localhost:9000/bucket/" + key);
             productos.put(id, conImagen);
             return conImagen;
+        }
+
+        @Override
+        public String subirImagenGaleria(long id, MultipartFile archivo) {
+            ProductoResponse actual = productos.get(id);
+            if (actual == null) {
+                throw new ApiException(HttpStatus.NOT_FOUND, "Producto no encontrado");
+            }
+            return "http://localhost:9000/bucket/productos/" + id + "/galeria-prueba.png";
         }
 
         @Override

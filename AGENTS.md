@@ -12,6 +12,7 @@ Este archivo proporciona orientación específica del repositorio para agentes d
 ## Estructura y límites de la aplicación
 - Base package: `com.codeconheiner.tienda`
 - Main: `TiendaApplication` (uses `@ConfigurationPropertiesScan`)
+- Imágenes: `productos.imagen_key` es fuente de verdad (V9). Galería `producto_imagenes`. Almacenamiento S3-compatible vía `StorageService` (`subirArchivo`, `urlPublica`, `derivarClaveDesdeUrlPublica`), `Cache-Control` immutable, `STORAGE_PUBLIC_URL_INCLUYE_BUCKET`. AdminBootstrap crea admin ACTIVO/VERIFICADO si no existe (método `crearAdmin`).
 - Domains:
   - `auth/`: AuthController (registro/login/refresh/logout/password), AuthService, JwtService, JwtAuthFilter, `RefreshTokenStore` (puerto) + RefreshTokenRepository; DTOs for registro/login/token/refresh. Las sesiones son **familias** de refresh tokens (`sesion_id`): rotación encadenada por `reemplazado_por`, detección de reuso (token ya usado ⇒ revoca la familia) y `purgarAntiguos`. El puerto permite sustituir la persistencia sin tocar `AuthService` (DIP).
   - `seguridad/`: `Auditoria` (escribe en la tabla `auditoria`, nunca tumba la petición), `SeguridadEncabezadosFilter` (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy, CSP y HSTS solo bajo HTTPS).

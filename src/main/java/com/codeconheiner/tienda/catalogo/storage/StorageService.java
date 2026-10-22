@@ -5,6 +5,9 @@ import com.codeconheiner.tienda.config.TiendaProperties;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import javax.imageio.ImageIO;
@@ -44,6 +47,15 @@ public class StorageService {
      * @return la clave del objeto subido
      */
     public String subir(MultipartFile file, Long productoId) {
+        String prefijo = "productos/" + productoId;
+        return subirArchivo(file, prefijo);
+    }
+
+    /**
+     * Método general para subir archivos con validaciones reutilizables.
+     * Genera la clave "{prefijo}/{UUID}.{ext}" sin usar el nombre original.
+     */
+    public String subirArchivo(MultipartFile file, String prefijo) {
         if (file == null || file.isEmpty()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Archivo inválido");
         }
@@ -64,12 +76,15 @@ public class StorageService {
         if (!esImagenValida(bytes, contentType)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Archivo no es una imagen válida");
         }
-        String key = "productos/" + productoId + "/" + UUID.randomUUID() + "." + extension(contentType);
+        String prefijoLimpio = prefijo == null ? "" : prefijo.replaceAll("^/+", "").replaceAll("/+$", "");
+        String key = (prefijoLimpio.isBlank() ? "" : prefijoLimpio + "/")
+                + UUID.randomUUID() + "." + extension(contentType);
         try {
             PutObjectRequest request = PutObjectRequest.builder()
                     .bucket(bucket())
                     .key(key)
                     .contentType(contentType)
+                    .cacheControl("public, max-age=31536000, immutable")
                     .build();
             s3Client.putObject(request, RequestBody.fromBytes(bytes));
         } catch (Exception e) {
@@ -92,7 +107,7 @@ public class StorageService {
         }
     }
 
-    /** URL publica del objeto: {public-base-url}/{bucket}/{key}. Null si no hay clave. */
+    /** URL publica del objeto. Null si no hay clave. */
     public String urlPublica(String key) {
         if (key == null || key.isBlank()) {
             return null;
@@ -101,7 +116,51 @@ public class StorageService {
         if (base.endsWith("/")) {
             base = base.substring(0, base.length() - 1);
         }
-        return base + "/" + bucket() + "/" + key;
+        if (publicUrlIncluyeBucket()) {
+            return base + "/" + bucket() + "/" + key;
+        }
+        return base + "/" + key;
+    }
+
+    /** Deriva la clave desde una URL pública propia. Devuelve Optional vacío si no es nuestra. */
+    public Optional<String> derivarClaveDesdeUrlPublica(String url) {
+        if (url == null || url.isBlank()) {
+            return Optional.empty();
+        }
+        String base = publicBaseUrl();
+        if (base != null && base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        if (base == null || !url.startsWith(base + "/")) {
+            return Optional.empty();
+        }
+        String resto = url.substring((base + "/").length());
+        if (publicUrlIncluyeBucket()) {
+            String b = bucket();
+            if (b != null && !b.isBlank() && resto.startsWith(b + "/")) {
+                String clave = resto.substring((b + "/").length());
+                return clave.isBlank() ? Optional.empty() : Optional.of(clave);
+            }
+            return Optional.empty();
+        }
+        // Si no incluye bucket, el resto debe ser la clave tal cual (puede incluir prefijos como productos/...)
+        if (resto.isBlank()) {
+            return Optional.empty();
+        }
+        // Evitar confundir URLs que aún incluyan el bucket cuando el flag está false
+        String b2 = bucket();
+        if (b2 != null && !b2.isBlank() && resto.startsWith(b2 + "/")) {
+            return Optional.empty();
+        }
+        return Optional.of(resto);
+    }
+
+    private boolean publicUrlIncluyeBucket() {
+        TiendaProperties.Storage storage = props.storage();
+        if (storage == null || storage.publicUrlIncluyeBucket() == null) {
+            return true;
+        }
+        return storage.publicUrlIncluyeBucket();
     }
 
     private String bucket() {
