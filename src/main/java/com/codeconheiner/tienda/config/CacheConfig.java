@@ -1,11 +1,15 @@
 package com.codeconheiner.tienda.config;
 
-import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.codeconheiner.tienda.catalogo.CategoriaResponse;
+import com.codeconheiner.tienda.catalogo.ProductoResponse;
+import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.type.TypeFactory;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,8 +23,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
-import org.springframework.data.redis.serializer.RedisSerializationContext;
+import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.RedisSerializationContext.SerializationPair;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 @Configuration
@@ -32,29 +36,70 @@ public class CacheConfig implements CachingConfigurer {
 
     @Bean
     public RedisCacheManager cacheManager(RedisConnectionFactory connectionFactory, TiendaProperties props) {
+        return RedisCacheManager.builder(connectionFactory)
+                .cacheDefaults(configuracionBase())
+                .withInitialCacheConfigurations(configuraciones(props.cache()))
+                .build();
+    }
+
+    /**
+     * Prefijo de claves ({@code tienda::}), claves en texto plano y sin valores nulos.
+     *
+     * <p>El serializador de valores por defecto es el de JDK: cada cache conoce el tipo de lo que
+     * guarda y lo registra en {@link #configuraciones}. Si se añade una cache nueva hay que
+     * añadirla ahí.
+     */
+    static RedisCacheConfiguration configuracionBase() {
+        return RedisCacheConfiguration.defaultCacheConfig()
+                .prefixCacheNameWith("tienda::")
+                .serializeKeysWith(SerializationPair.fromSerializer(new StringRedisSerializer()))
+                .disableCachingNullValues();
+    }
+
+    /**
+     * Una configuración por cache, cada una con el tipo concreto de su valor y su TTL.
+     *
+     * <p>No sirve {@code GenericJackson2JsonRedisSerializer} con tipado por defecto: los DTO de
+     * la aplicación son {@code record} y por tanto {@code final}, de modo que
+     * {@code DefaultTyping.NON_FINAL} no escribe la propiedad {@code @class} en el JSON y la
+     * lectura acaba en {@code missing type id property '@class'}. Con un serializador tipado el
+     * JSON es plano y se lee con el tipo declarado, sin metadatos de clase.
+     */
+    static Map<String, RedisCacheConfiguration> configuraciones(TiendaProperties.CacheConfigProperties cache) {
+        ObjectMapper mapper = mapperJson();
+        TypeFactory tipos = mapper.getTypeFactory();
+        RedisCacheConfiguration base = configuracionBase();
+
+        JavaType producto = tipos.constructType(ProductoResponse.class);
+        JavaType listadoProductos = tipos.constructCollectionType(List.class, ProductoResponse.class);
+        JavaType listadoCategorias = tipos.constructCollectionType(List.class, CategoriaResponse.class);
+        JavaType infoTienda = tipos.constructMapType(Map.class, String.class, Object.class);
+
+        Map<String, RedisCacheConfiguration> configs = new HashMap<>();
+        configs.put(CacheCatalogo.PRODUCTO, base
+                .serializeValuesWith(json(mapper, producto))
+                .entryTtl(ttl(cache.ttlProductos(), Duration.ofMinutes(5))));
+        configs.put(CacheCatalogo.LISTADO, base
+                .serializeValuesWith(json(mapper, listadoProductos))
+                .entryTtl(ttl(cache.ttlListados(), Duration.ofSeconds(60))));
+        configs.put(CacheCatalogo.CATEGORIAS, base
+                .serializeValuesWith(json(mapper, listadoCategorias))
+                .entryTtl(ttl(cache.ttlCategorias(), Duration.ofHours(1))));
+        configs.put(CacheCatalogo.TIENDA, base
+                .serializeValuesWith(json(mapper, infoTienda))
+                .entryTtl(ttl(cache.ttlTienda(), Duration.ofHours(1))));
+        return configs;
+    }
+
+    private static ObjectMapper mapperJson() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.registerModule(new JavaTimeModule());
         mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-        mapper.activateDefaultTyping(mapper.getPolymorphicTypeValidator(), ObjectMapper.DefaultTyping.NON_FINAL,
-                JsonTypeInfo.As.PROPERTY);
+        return mapper;
+    }
 
-        GenericJackson2JsonRedisSerializer serializer = new GenericJackson2JsonRedisSerializer(mapper);
-        StringRedisSerializer keySerializer = new StringRedisSerializer();
-
-        RedisCacheConfiguration defaultConfig = RedisCacheConfiguration.defaultCacheConfig()
-                .prefixCacheNameWith("tienda::")
-                .serializeKeysWith(RedisSerializationContext.SerializationPair.fromSerializer(keySerializer))
-                .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(serializer))
-                .disableCachingNullValues();
-
-        Map<String, RedisCacheConfiguration> configs = new HashMap<>();
-        configs.put("producto", defaultConfig.entryTtl(ttl(props.cache().ttlProductos(), Duration.ofMinutes(5))));
-        configs.put("catalogo-listado", defaultConfig.entryTtl(ttl(props.cache().ttlListados(), Duration.ofSeconds(60))));
-        configs.put("categorias", defaultConfig.entryTtl(ttl(props.cache().ttlCategorias(), Duration.ofHours(1))));
-        configs.put("tienda-info", defaultConfig.entryTtl(ttl(props.cache().ttlTienda(), Duration.ofHours(1))));
-
-        return RedisCacheManager.builder(connectionFactory).cacheDefaults(defaultConfig).withInitialCacheConfigurations(configs)
-                .build();
+    private static SerializationPair<?> json(ObjectMapper mapper, JavaType tipo) {
+        return SerializationPair.fromSerializer(new Jackson2JsonRedisSerializer<>(mapper, tipo));
     }
 
     @Override
@@ -82,7 +127,7 @@ public class CacheConfig implements CachingConfigurer {
         };
     }
 
-    private Duration ttl(String value, Duration fallback) {
+    private static Duration ttl(String value, Duration fallback) {
         if (value == null || value.isBlank()) {
             return fallback;
         }

@@ -26,7 +26,7 @@ public class CatalogoController {
     }
 
     /** Datos de la tienda para que el frontend se configure (nombre, moneda, IVA...). */
-    @Cacheable(value = "tienda-info")
+    @Cacheable(value = "tienda-info", key = "'actual'")
     @GetMapping("/tienda")
     public Map<String, Object> tienda() {
         return Map.of(
@@ -36,7 +36,7 @@ public class CatalogoController {
                 "envioGratisDesde", props.envioGratisDesde());
     }
 
-    @Cacheable(value = "categorias")
+    @Cacheable(value = "categorias", key = "'todas'")
     @GetMapping("/categorias")
     public List<CategoriaResponse> categorias() {
         return categorias.listarActivas();
