@@ -4,6 +4,8 @@ services:
     container_name: tienda-api
     restart: unless-stopped
     environment:
+      SPRINGDOC_API_DOCS_ENABLED: "false"
+      SPRINGDOC_SWAGGER_UI_ENABLED: "false"
       STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:-}
       STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:-}
       STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:-}
