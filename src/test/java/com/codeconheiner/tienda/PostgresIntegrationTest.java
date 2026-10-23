@@ -160,20 +160,29 @@ class PostgresIntegrationTest {
                 .isEqualTo("El precio debe ser mayor o igual a 0");
     }
 
-        @Test
-        void redisInaccesibleNoAfectaCatalogoNiHealth() {
-                long inicio = System.nanoTime();
-                ResponseEntity<JsonNode> listado = get("/api/catalogo/productos");
-                long duracionMs = Duration.ofNanos(System.nanoTime() - inicio).toMillis();
+    @Test
+    void redisInaccesibleNoAfectaCatalogoNiHealth() throws Exception {
+        String adminToken = tokenAdmin();
+        String sufijo = UUID.randomUUID().toString().substring(0, 8);
+        String sku = "IT-REDIS-" + sufijo;
+        ResponseEntity<JsonNode> creado = postJson("/api/admin/productos",
+                producto(sku, "Producto Redis " + sufijo, 1000, 3), adminToken);
+        assertThat(creado.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        long productoId = body(creado).path("id").asLong();
 
-                assertThat(listado.getStatusCode()).isEqualTo(HttpStatus.OK);
-                assertThat(duracionMs).isLessThan(3000);
+        long inicio = System.nanoTime();
+        ResponseEntity<JsonNode> detalle = get("/api/catalogo/productos/" + productoId);
+        long duracionMs = Duration.ofNanos(System.nanoTime() - inicio).toMillis();
 
-                ResponseEntity<JsonNode> health = get("/actuator/health");
-                assertThat(health.getStatusCode()).isEqualTo(HttpStatus.OK);
-                assertThat(body(health).path("status").asText()).isEqualTo("UP");
-                assertThat(body(health).path("components").has("redis")).isFalse();
-        }
+        assertThat(detalle.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(body(detalle).path("id").asLong()).isEqualTo(productoId);
+        assertThat(duracionMs).isLessThan(1000);
+
+        ResponseEntity<JsonNode> health = get("/actuator/health");
+        assertThat(health.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(body(health).path("status").asText()).isEqualTo("UP");
+        assertThat(body(health).path("components").has("redis")).isFalse();
+    }
 
     @Test
     void adminPuedeCrearActualizarYDesactivarProductoEnPostgres() throws Exception {

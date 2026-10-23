@@ -11,8 +11,9 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
-      connect-timeout: 2s
-      timeout: 2s
+      # Fallar rápido cuando Redis no responde: la caché cae a BD en vez de esperar.
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:500ms}
+      timeout: ${REDIS_TIMEOUT:500ms}
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/tienda}
     username: ${DB_USER:tienda}

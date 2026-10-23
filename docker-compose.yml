@@ -14,6 +14,8 @@ services:
       REDIS_HOST: ${REDIS_HOST:-}
       REDIS_PORT: ${REDIS_PORT:-6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_CONNECT_TIMEOUT: ${REDIS_CONNECT_TIMEOUT:-500ms}
+      REDIS_TIMEOUT: ${REDIS_TIMEOUT:-500ms}
       DB_URL: jdbc:postgresql://web_db:5432/${DB_NAME:-tienda}
       DB_USER: ${DB_USER:-tienda}
       DB_PASSWORD: ${DB_PASSWORD:?Defina DB_PASSWORD en el archivo .env}

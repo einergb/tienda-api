@@ -346,6 +346,8 @@ No publiques `.env` ni compartas sus valores. `ADMIN_PASSWORD` es opcional: al i
 | `CACHE_TTL_CATEGORIAS` | `1h` | TTL para categorías. |
 | `CACHE_TTL_TIENDA` | `1h` | TTL para datos de tienda. |
 | `REDIS_HOST/PORT/PASSWORD` | `localhost/6379/` | Conexión Redis cuando `CACHE_TYPE=redis`. |
+| `REDIS_CONNECT_TIMEOUT` | `500ms` | Tiempo máximo para conectar con Redis; al agotarse la caché cae a PostgreSQL. |
+| `REDIS_TIMEOUT` | `500ms` | Timeout de comandos Redis. |
 | `STORAGE_ENDPOINT` | `http://192.168.0.150:9000` | Endpoint de la API S3 de RustFS, accesible desde la API. |
 | `STORAGE_ACCESS_KEY` | Vacía | Access key del usuario de RustFS con permisos sobre el bucket. |
 | `STORAGE_SECRET_KEY` | Vacía | Secret key del usuario de RustFS. |
@@ -565,7 +567,7 @@ Redis se usa opcionalmente para la caché del catálogo (`CACHE_TYPE=redis`). El
 
 ### Redis para caché
 
-La caché cubre tienda, categorías, listado y detalle público. El TTL es configurable por entorno; cambios de catálogo hechos desde la API invalidan las entradas afectadas. PostgreSQL no publica invalidaciones para escrituras externas, por lo que deben considerarse los TTL de respaldo documentados en Seguridad y limitaciones. Una caída de Redis no desactiva la API ni cambia el estado de health. La conexión usa timeouts de 2 segundos y Redis se excluye del health de Actuator.
+La caché cubre tienda, categorías, listado y detalle público. El TTL es configurable por entorno; cambios de catálogo hechos desde la API invalidan las entradas afectadas. PostgreSQL no publica invalidaciones para escrituras externas, por lo que deben considerarse los TTL de respaldo documentados en Seguridad y limitaciones. Una caída de Redis no desactiva la API ni cambia el estado de health. La conexión usa timeouts de 500 ms (`REDIS_CONNECT_TIMEOUT`/`REDIS_TIMEOUT`), rechaza comandos sin conexión y evita reintentar contra Redis durante unos segundos tras un fallo, de modo que las peticiones siguen sirviéndose desde PostgreSQL sin esperas largas. Redis se excluye del health de Actuator.
 
 ### RustFS y buckets
 
