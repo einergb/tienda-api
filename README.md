@@ -14,6 +14,7 @@ API REST para una tienda de comercio electrónico, construida con Spring Boot, J
 - [Ejecución local](#ejecución-local)
 - [Despliegue con Docker](#despliegue-con-docker)
 - [API](#api)
+- [Integración con frontend](#integración-con-frontend)
 - [Autenticación y permisos](#autenticación-y-permisos)
 - [Pagos y webhooks](#pagos-y-webhooks)
 - [Base de datos](#base-de-datos)
@@ -481,6 +482,162 @@ Para administrar productos, usa `Authorization: Bearer <token>`. La cuenta debe 
 - **Nota**: puede existir una fila de galería con placeholder tipo `https://<HOST_DE_IMAGENES>/...` (producto 1 en producción). No se borra automáticamente por código/migración; requiere limpieza manual.
 
 El catálogo público solo muestra productos activos con stock disponible. El `PUT` actualiza los datos e inventario, pero no reactiva productos; actualmente la API no expone un endpoint de reactivación.
+
+## Integración con frontend
+
+El frontend necesita la URL base de la API, un origen permitido por CORS y enviar el JWT en las solicitudes protegidas. La API es stateless: no usa cookies ni sesión de servidor.
+
+### URL base y CORS
+
+- Desarrollo local: `http://localhost:8080`.
+- Despliegue actual en la red local: `http://192.168.0.150:8080` (ajusta la dirección si cambia el host).
+- OpenAPI: `/v3/api-docs`; Swagger UI: `/swagger-ui.html`.
+
+Configura la URL en el frontend; por ejemplo, con Vite:
+
+```dotenv
+VITE_API_URL=http://localhost:8080
+```
+
+Por defecto, CORS permite únicamente `http://localhost:5173`. Si el frontend usa otro origen, incluye el origen exacto en el `.env` del backend, sin barra final:
+
+```dotenv
+CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+```
+
+Se permiten los métodos `GET`, `POST`, `PUT`, `PATCH`, `DELETE` y `OPTIONS`, y las cabeceras `Authorization` y `Content-Type`. Si el frontend envía cabeceras personalizadas, también deben añadirse en `SecurityConfig`.
+
+### Login, JWT y refresh
+
+Login: `POST /api/auth/login`.
+
+```http
+Content-Type: application/json
+```
+
+```json
+{
+  "email": "cliente@correo.com",
+  "password": "clave-segura"
+}
+```
+
+La respuesta incluye `token`, `tipo`, `expiraEnSegundos`, `nombre`, `rol` y `refreshToken`. Envía el token de acceso en cada solicitud protegida:
+
+```http
+Authorization: Bearer <token>
+```
+
+Refresh: `POST /api/auth/refresh`, con el refresh token en el cuerpo:
+
+```json
+{
+  "refreshToken": "abc123..."
+}
+```
+
+Cada refresh rota el token: reemplaza el refresh token anterior por el nuevo recibido. No envíes varios refresh simultáneos usando el mismo token; el reuso puede revocar la familia de sesión.
+
+El frontend debería mantener el token de acceso en memoria y proteger el refresh token. Ante un `401`, puede intentar refrescar una sola vez y repetir la solicitud; si el refresh falla, debe cerrar la sesión. El endpoint `POST /api/auth/logout` revoca la sesión usando el refresh token enviado en el cuerpo; `/api/auth/**` es público y no requiere JWT.
+
+### Registro
+
+`POST /api/auth/registro` devuelve `202 Accepted`. El usuario debe confirmar su correo antes de poder iniciar sesión. El cuerpo esperado es:
+
+```json
+{
+  "primerNombre": "Ana",
+  "segundoNombre": null,
+  "primerApellido": "Pérez",
+  "segundoApellido": null,
+  "nombre": "Ana Pérez",
+  "telefono": "3001234567",
+  "email": "ana@correo.com",
+  "emailConfirmacion": "ana@correo.com",
+  "password": "clave-segura-1",
+  "captchaToken": "token-recaptcha",
+  "aceptaTerminos": true,
+  "aceptaTratamientoDatos": true,
+  "aceptaMarketing": false
+}
+```
+
+`CAPTCHA_SECRETO` configura la verificación de reCAPTCHA. **Limitación de seguridad actual:** el backend acepta literalmente `captchaToken: "test"` en cualquier entorno y, si `CAPTCHA_SECRETO` está vacío, acepta cualquier token no vacío sin verificarlo. No despliegues con ese bypass; configura el secreto y revisa el bypass antes de exponer el registro en producción.
+
+### Rutas y permisos
+
+No requieren token:
+
+| Método | Ruta | Uso |
+| --- | --- | --- |
+| `GET` | `/api/catalogo/tienda` | Información de la tienda. |
+| `GET` | `/api/catalogo/categorias` | Categorías. |
+| `GET` | `/api/catalogo/productos?categoriaId=&q=&page=0&size=12` | Listado y búsqueda. |
+| `GET` | `/api/catalogo/productos/{id}` | Detalle de producto. |
+| `GET` | `/api/resenas/producto/{productoId}` | Reseñas del producto. |
+| `GET` | `/api/cupones/validar?codigo=&monto=` | Validación de cupón. |
+
+El catálogo público solo devuelve productos activos con `stockDisponible > 0`; el detalle de un producto sin stock responde `404`.
+
+Requieren JWT válido las rutas `/api/carrito/**`, `/api/direcciones/**`, `/api/pedidos/**`, `/api/pagos/**`, `/api/resenas/**` (excepto la consulta pública de reseñas indicada arriba) y `/api/envios/**`. `/api/admin/**` requiere además el rol `ADMIN`. La validación `GET /api/cupones/validar` es pública; la administración de cupones está bajo `/api/admin/cupones/**`.
+
+### Errores y límites
+
+Los errores siguen el formato `ProblemDetail`. Una respuesta de autenticación puede verse así:
+
+```json
+{
+  "type": "about:blank",
+  "title": "Unauthorized",
+  "status": 401,
+  "detail": "Autenticación requerida: inicia sesión o proporciona un token válido.",
+  "instance": "/api/carrito"
+}
+```
+
+Los errores de validación incluyen un mapa `errores` por campo:
+
+```json
+{
+  "status": 400,
+  "detail": "Los datos enviados no son válidos.",
+  "errores": {
+    "email": "El correo no tiene un formato válido"
+  }
+}
+```
+
+| Estado | Significado |
+| --- | --- |
+| `400` | Datos inválidos o JSON mal formado. |
+| `401` | Falta el token o no es válido. |
+| `403` | El usuario no tiene el rol o permiso requerido. |
+| `404` | Recurso no encontrado o producto sin stock. |
+| `409` | Conflicto, por ejemplo correo duplicado. |
+| `422` | Regla de negocio no satisfecha. |
+| `429` | Límite de solicitudes; respeta la cabecera `Retry-After`. |
+| `500` | Error interno. |
+
+Los límites por IP son 10 solicitudes por minuto para login, registro y refresh, y 300 por minuto para el resto de `/api/**`.
+
+### Pagos
+
+El frontend crea una sesión de pago; no recibe webhooks. Envía `POST /api/pagos/sesion` con un JWT válido y una clave de idempotencia que debe reutilizarse al reintentar la misma operación:
+
+```http
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+```json
+{
+  "pedidoId": 123,
+  "pasarela": "WOMPI",
+  "claveIdempotencia": "uuid-del-front"
+}
+```
+
+La API devuelve los datos de la sesión y la URL para continuar el pago. La pasarela comunica el resultado al backend mediante `/api/webhooks/wompi` o `/api/webhooks/epayco`; el backend valida la firma y actualiza el pago.
 
 ## Autenticación y permisos
 
